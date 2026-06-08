@@ -1,0 +1,83 @@
+name: 'AWS Environment Validator'
+description: 'Validates AWS account and retrieves environment information from AWS Organizations'
+
+inputs:
+  aws-account-id:
+    required: true
+    description: 'AWS Account ID to find get env name'
+  env-type:
+    required: true
+    description: 'Environment Type (DEV/TEST/PREPROD/PROD)'
+  region: 
+    required: false
+    default: 'eu-west-1'
+    description: 'AWS Region'
+
+outputs:
+  full-env-name:
+    description: 'Full environment name (PAYS-DEV1, DCP-TEST2, etc)'
+    value: ${{ steps.env-name-validation.outputs.full_env_name }}
+  approval-env:
+    description: 'Approval environment name for GitHub environments'
+    value: ${{ steps.env-name-validation.outputs.approval_env }}
+  aws-account-id:
+    description: 'AWS Account ID extracted from AWS Organizations'
+    value: ${{ steps.env-name-validation.outputs.aws_account_id }}
+
+runs:
+  using: composite
+  steps:
+  - name: Assume GitHub OIDC Role
+    uses: company-org/reusable-workflows/.github/actions/configure-aws-credentials@v3
+    with:
+      aws-region: ${{ inputs.region }}
+      role-to-assume: "arn:aws:iam::579255655658:role/RoleForPatchSchedulerListAccounts"
+      role-to-assume-for-oidc: "arn:aws:iam::881218109313:role/GitHubOIDCRole"
+      role-session-name: 'List_Accounts'
+
+  - name: Environment Name Validation
+    id: env-name-validation
+    shell: pwsh
+    run: |
+      # Get Account Name from ID
+      $query_result = Invoke-Expression "aws organizations list-accounts --output json" | ConvertFrom-Json
+      $account_name = $query_result.Accounts | Where-Object { $_.Id -eq "${{ inputs.aws-account-id }}" } | Select-Object -ExpandProperty Name
+      Write-Host "Query: $account_name"
+      $envName = $account_name -replace '.*-', ''
+      Write-Host "Env name: $envName"
+      $envName = ($envName | Select-Object -First 1).ToUpper()
+      
+      # If no account ID provided, find account by environment type
+      if ("${{ inputs.aws-account-id }}" -eq "000000000000") {
+        $envTypeLower = "${{ inputs.env-type }}".ToLower()
+        $matching_account = $query_result.Accounts | Where-Object { $_.Name -like "company-name-itorchestration-mim-$envTypeLower" } | Select-Object -First 1
+        if ($matching_account) {
+          $account_id = $matching_account.Id
+          $account_name = $matching_account.Name
+          Write-Host "Found matching account: $account_name ($account_id)"
+        } else {
+          Write-Output "No matching account found for environment type $envTypeLower"
+          exit 1
+        }
+      } else {
+        $account_id = "${{ inputs.aws-account-id }}"
+      }
+      
+      # Validate Env Name
+      if ($envName -like "*${{ inputs.env-type }}*") {
+        Write-Output "AWS Account $account_name with ID ${{ inputs.aws-account-id }} is suitable"
+      } 
+      else {
+        Write-Output "AWS Account $account_name with ID ${{ inputs.aws-account-id }} is not suitable for the selected environment type ${{ inputs.env-type }}"
+        exit 1
+      }
+      
+      $fullEnvName = $account_name -replace 'company-name-itorchestration-mim-', ''
+      $fullEnvName = $fullEnvName.ToUpper()
+      
+      # Set VPC Prefix
+      $vpcPrefix = $fullEnvName
+      "full_env_name=$fullEnvName" >> $env:GITHUB_OUTPUT
+      "approval_env=${{ inputs.env-type }}-REVIEW" >> $env:GITHUB_OUTPUT
+      "aws_account_id=$account_id" >> $env:GITHUB_OUTPUT
+      

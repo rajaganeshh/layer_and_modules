@@ -1,0 +1,20 @@
+name: 'Terraform Common Steps'
+description: 'Composite action for checkout, SSH key setup, and Terraform setup.'
+inputs:
+  ssh-key:
+    description: 'SSH private key for Terraform modules'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Set up SSH key for Terraform modules
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ inputs.ssh-key }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
+      shell: bash
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3

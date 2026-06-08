@@ -1,0 +1,260 @@
+name: Terraform Module Runner
+run-name: Create/Update ${{ inputs.env_type }} - ${{ inputs.components }} - ${{ inputs.option }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      components:
+        description: 'Terraform components to run'
+        required: true
+        default: 'common'
+        type: choice
+        options:
+          - common
+          - lb
+          - ecr
+          - rds
+          - bedrock
+          - secrets
+          - ssm
+          - ec2
+          - ubuntu
+          - s3
+          - scheduled-1630
+          - scheduled-ticket          
+          - scheduled-change
+          - scheduled-knowledge
+          - bedrock-ticket              
+          - bedrock-change
+          - bedrock-knowledge
+          - backend
+          - frontend
+          - middleware
+          - interface
+          - all
+      aws-account-id:
+        description: 'AWS Account ID (leave empty to auto-detect from env-type)'
+        required: false
+        type: string
+        default: ''
+      env_type:
+        description: 'Environment type'
+        required: true
+        default: 'DEV'
+        type: choice
+        options:
+          - DEV
+      option:
+        description: 'Terraform option'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      require_approval:
+        description: 'Require manual approval before applying changes'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: write
+  actions: write
+  security-events: write   
+
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      execution-mode: ${{ steps.set-execution-mode.outputs.execution_mode }}
+      matrix: ${{ steps.set-execution-mode.outputs.matrix }}
+      aws-account-id: ${{ steps.get-account.outputs.aws-account-id }}
+      full-env-name: ${{ steps.env-validation.outputs.full-env-name }}
+      lambda_zip_path: ${{ steps.download-lambda-zip.outputs.lambda_zip_path }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get AWS Account Info
+        id: env-validation
+        uses: ./.github/actions
+        with:
+          aws-account-id:  ${{ github.event.inputs.aws-account-id || '000000000000' }} 
+          env-type: ${{ github.event.inputs.env_type }}
+          region: eu-west-1
+
+      - name: Set AWS Account ID
+        id: get-account
+        run: |
+          if [ -n "${{ github.event.inputs.aws-account-id }}" ]; then
+            echo "aws-account-id=${{ github.event.inputs.aws-account-id }}" >> $GITHUB_OUTPUT
+          else
+            # Use the account ID determined by the action from AWS Organizations lookup
+            echo "aws-account-id=${{ steps.env-validation.outputs.aws-account-id }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set execution mode
+        id: set-execution-mode
+        run: |
+          if [ "${{ github.event.inputs.components }}" == "all" ]; then
+            echo "execution_mode=parallel" >> $GITHUB_OUTPUT
+          else
+            echo "execution_mode=single" >> $GITHUB_OUTPUT
+            echo 'matrix=["${{ github.event.inputs.components }}"]' >> $GITHUB_OUTPUT
+          fi
+
+         
+          
+  # Single component execution (original matrix approach)
+  terraform-single:
+    needs: [setup]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: ${{ fromJson(needs.setup.outputs.matrix) }}
+      fail-fast: false
+    env:
+      TF_VAR_env: ${{ github.event.inputs.env_type }}
+      TF_VAR_env_type: ${{ github.event.inputs.env_type }}
+      TF_VAR_option: ${{ github.event.inputs.option }}
+      TF_VAR_app_type: ${{ matrix.component }}
+      TF_VAR_aws_account_id: ${{ needs.setup.outputs.aws-account-id }}
+      TF_VAR_full_env_name: ${{ needs.setup.outputs.full-env-name }}
+      TF_WORKSPACE: ${{ github.event.inputs.env_type }}
+      TF_VAR_layer_zip: ${{ matrix.component == 'schedule-1630' && format('lambda/{0}.zip', matrix.component) || '' }}
+      TF_VAR_lambda_function_file: ${{ needs.setup.outputs.lambda_zip_path }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key for Terraform modules
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TF_MODULE_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Download Lambda function zip from GitHub Packages
+        id: download-lambda-zip
+        if: ${{ startsWith(matrix.component, 'scheduled-') || startsWith(matrix.component, 'bedrock-') }}
+        run: |
+          ZIP_PATH="$(pwd)/lambda/${{ matrix.component }}.zip"
+          gh release download "${{ matrix.component }}-function" --repo company-org/simon_agentic_ai_lambda --pattern "${{ matrix.component }}.zip"  -O "$ZIP_PATH"
+          echo "TF_VAR_lambda_function_file=$ZIP_PATH" >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ secrets.GH_PACKAGES_PAT_TOKEN }}
+
+      - name: Construct Terraform state key
+        id: tfstate-key
+        run: |
+          STATE_KEY="simon_agentic_ai_infra/${{ github.event.inputs.env_type }}/${{ matrix.component }}.tfstate"
+          echo "state_key=$STATE_KEY" >> $GITHUB_OUTPUT
+          
+      - name: Checking the matrix component
+        id: component-key
+        run: |
+          if [[ "${{ matrix.component }}" =~ ^(scheduled-|bedrock-) ]]; then
+            echo "workspace=${{ matrix.component }}" >> $GITHUB_OUTPUT
+            echo "workdir=lambda" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.component }}" =~ ^(frontend|backend|middleware|interface)$ ]]; then
+            echo "workspace=${{ matrix.component }}" >> $GITHUB_OUTPUT
+            echo "workdir=ecs_services/${{ matrix.component }}" >> $GITHUB_OUTPUT
+          else
+            echo "workspace=${{ matrix.component }}" >> $GITHUB_OUTPUT
+            echo "workdir=${{ matrix.component }}" >> $GITHUB_OUTPUT
+          fi	
+         
+      - name: Configure AWS credentials (OIDC role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: eu-west-1
+          role-to-assume: arn:aws:iam::${{ needs.setup.outputs.aws-account-id }}:role/GHOIDCRole
+          role-session-name: terraform-oidc-${{ matrix.component }}-${{ github.run_id }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=${{ steps.component-key.outputs.workdir }} init -backend-config="assume_role={role_arn=\"${{ vars.TF_AWS_S3_BACKEND_ROLE_TO_ASSUME }}\"}" -backend-config="key=${{ steps.tfstate-key.outputs.state_key }}"
+
+      - name: Re-assume OIDC role for Terraform operations
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: eu-west-1
+          role-to-assume: arn:aws:iam::${{ needs.setup.outputs.aws-account-id }}:role/GHOIDCRole
+          role-session-name: terraform-oidc-${{ matrix.component }}-${{ github.run_id }}
+
+
+      - name: Select/Create Terraform Workspace
+        run: |
+          unset TF_WORKSPACE
+          cd ${{ steps.component-key.outputs.workdir }}
+          terraform workspace select ${{ github.event.inputs.env_type }} || terraform workspace new ${{ github.event.inputs.env_type }}
+ 
+      - name: Set var-file path
+        id: set-varfile
+        run: |
+          VAR_FILE="input_files/${{ github.event.inputs.env_type }}.auto.tfvars.json"
+          echo "var_file=$VAR_FILE" >> $GITHUB_OUTPUT
+
+      - name: Terraform Plan
+        if: github.event.inputs.option == 'plan' || github.event.inputs.option == 'apply'
+        run: |
+          if [ -f "${{ steps.component-key.outputs.workdir }}/${{ steps.set-varfile.outputs.var_file }}" ]; then
+            terraform -chdir=${{ steps.component-key.outputs.workdir }} plan -var-file="${{ steps.set-varfile.outputs.var_file }}"
+          else
+            terraform -chdir=${{ steps.component-key.outputs.workdir }} plan
+          fi
+  
+  approval:
+    needs: terraform-plan
+    if: (github.event.inputs.option == 'apply' || github.event.inputs.option == 'destroy') && github.event.inputs.require_approval == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ format('{0}-REVIEW', github.event.inputs.env_type) }}
+    steps:
+      - name: Approval granted
+        run: echo "Approval granted – proceeding with ${{ github.event.inputs.option }}"
+
+
+      - name: Terraform Apply
+        if: github.event.inputs.option == 'apply'
+        run: |
+          if [ -f "${{ steps.component-key.outputs.workdir }}/${{ steps.set-varfile.outputs.var_file }}" ]; then
+            terraform -chdir=${{ steps.component-key.outputs.workdir }} apply -auto-approve -var-file="${{ steps.set-varfile.outputs.var_file }}"
+          else
+            terraform -chdir=${{ steps.component-key.outputs.workdir }} apply -auto-approve
+          fi
+
+      - name: Terraform Destroy
+        if: github.event.inputs.option == 'destroy'
+        run: |
+          if [ -f "${{ steps.component-key.outputs.workdir }}/${{ steps.set-varfile.outputs.var_file }}" ]; then
+            terraform -chdir=${{ steps.component-key.outputs.workdir }} destroy -auto-approve -var-file="${{ steps.set-varfile.outputs.var_file }}"
+          else
+            terraform -chdir=${{ steps.component-key.outputs.workdir }} destroy -auto-approve
+          fi
+
+      - name: Configure AWS credentials (Terraform role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: "${{ github.event.inputs.region }}"
+          role-to-assume: "${{ vars.SECRET_ACCOUNT_TERRAFORM_ROLE }}"
+          role-chaining: true
+          role-session-name: terraform-role-${{ matrix.component }}-${{ github.run_id }}  
+          
+      - name: Deploy to ECS
+        if: github.event.inputs.option == 'apply' && (matrix.component == 'frontend' || matrix.component == 'middleware')
+        run: |
+          CLUSTER_NAME="$(echo '${{ github.event.inputs.env_type }}' | tr '[:upper:]' '[:lower:]')-cluster"
+          aws ecs update-service \
+            --cluster "$CLUSTER_NAME" \
+            --service "${{ matrix.component }}" \
+            --force-new-deployment
+

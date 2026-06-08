@@ -1,0 +1,70 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:CreateLogGroup"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParametersByPath"
+      ],
+      "Resource": "arn:aws:ssm:*:${account}:parameter/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt"
+      ],
+      "Resource": "arn:aws:kms:*:${account}:key/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "rds-db:connect",
+      "Resource": "arn:aws:rds-db:eu-west-1:${account}:dbuser:*/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "rds:ModifyOptionGroup",
+        "rds:ModifyDBParameterGroup"
+      ],
+      "Resource": [
+        "arn:aws:rds:*:${account}:pg:*",
+        "arn:aws:rds:*:${account}:og:*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "fsx:DescribeFileSystems",
+        "fsx:DescribeMountTargets",
+        "fsx:DescribeVolumes"
+      ],
+      "Resource": "arn:aws:fsx:eu-west-1:${account}:file-system/*"
+    }
+  ]
+}

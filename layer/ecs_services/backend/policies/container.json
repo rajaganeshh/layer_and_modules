@@ -1,0 +1,28 @@
+[
+  {
+    "name": "${container_name}",
+    "image": "${account}.dkr.ecr.eu-west-1.amazonaws.com/${image_name}:${image_tag}",
+    "essential": true,
+    "cpu": ${cpu},
+    "memory": ${memory},
+	"portMappings": [
+		{
+			"containerPort": ${container_port},
+			"protocol": "tcp"
+		}
+	],
+  "environment" : [
+    { "name" : "secret_name", "value" : "${secret_value}" },
+    { "name" : "region_name", "value" : "${region}" }
+  ],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "/ecs/${log_group}",
+		"awslogs-create-group": "true",
+        "awslogs-region": "${region}",
+        "awslogs-stream-prefix": "${log_stream_prefix}"
+      }
+    }
+  }
+]

@@ -1,0 +1,21 @@
+{
+    "Id": "key-consolepolicy-3",
+    "Version": "2012-10-17",
+    "Statement": [
+         {
+            "Sid": "Allowuseofthekey",
+            "Effect": "Allow",
+            "Action": [
+                "kms:Encrypt",
+                "kms:Decrypt",
+                "kms:ReEncrypt*",
+                "kms:GenerateDataKey*",
+                "kms:DescribeKey",
+				"kms:CreateGrant",
+				"kms:ReEncryptFrom",
+				"kms:GenerateDataKeyWithoutPlaintext"
+            ],
+            "Resource": ["${kms_id}","${ebs_kms_id}","${asg_arn}"]
+        }
+    ]
+}

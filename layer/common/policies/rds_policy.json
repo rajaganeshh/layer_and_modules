@@ -1,0 +1,21 @@
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Effect": "Allow",
+			"Action": "rds-db:connect",
+			"Resource": "arn:aws:rds-db:eu-west-1:${account}:dbuser:*/*"
+                },
+		{
+		"Effect": "Allow",
+			"Action": [
+				"rds:ModifyOptionGroup",
+				"rds:ModifyDBParameterGroup"
+			],
+			"Resource": [
+				"arn:aws:rds:*:${account}:pg:*",
+				"arn:aws:rds:*:${account}:og:*"
+			]
+		}
+	]	
+}
