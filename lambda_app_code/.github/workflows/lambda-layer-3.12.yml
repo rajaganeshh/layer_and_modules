@@ -1,0 +1,230 @@
+name: Build and Package the Lambda layer3.12 package
+run-name: Build and Package the Lambda ${{ inputs.layer_name }} layer3.12 package ${{ inputs.action }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      layer_name:
+        description: 'Lambda Layer name'
+        required: true
+        type: choice
+        options:
+          - base
+          - numpy
+          - pdf
+          - db
+          - presidio
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'create'
+        type: choice
+        options:
+          - create
+          - aws-publish
+          - create-and-publish
+      ENV_TYPE:
+        description: 'Environment Type'
+        required: true
+        type: choice
+        options:
+          - DEV
+          - PROD
+
+permissions:
+  id-token: write
+  contents: write
+  checks: read
+  actions: write
+  packages: write
+
+jobs:
+  build-and-publish-layer:
+    if: ${{ github.event.inputs.action == 'create' }}
+    runs-on: ubuntu-latest
+    env:
+      LAYER_NAME: ${{ github.event.inputs.layer_name }}
+      PYTHON_VERSION: '3.12'
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up GitHub credentials (for LFS and submodules)
+        run: |
+          git config --global url."https://${{ secrets.GH_PACKAGES_PAT_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
+      - name: Build Lambda layer3.12 with Docker
+        run: |
+          set -e
+          mkdir -p "${{ github.workspace }}/layers/${{ env.LAYER_NAME }}/output"
+
+          cat > Dockerfile <<'EOF'
+          FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+
+          RUN dnf install -y python3.12 python3.12-pip python3.12-devel \
+              gcc postgresql-devel zip jq && \
+              rm -rf /var/cache/dnf
+
+          WORKDIR /opt
+          COPY ${{ env.LAYER_NAME }}/requirements.txt .
+
+          ARG LAYER_NAME
+          RUN if [ "$LAYER_NAME" = "presidio" ]; then \
+                echo "Installing presidio with --no-cache-dir..."; \
+                python3.12 -m pip install --no-cache-dir -r requirements.txt -t python; \
+              else \
+                echo "Installing standard dependencies..."; \
+                python3.12 -m pip install --no-cache-dir -r requirements.txt -t python; \
+              fi
+          EOF
+
+          docker build --build-arg LAYER_NAME=${{ env.LAYER_NAME }} -t lambda-layer-${{ env.LAYER_NAME }} .
+          docker run --rm -v "${{ github.workspace }}/layers/${{ env.LAYER_NAME }}/output:/workspace" \
+            lambda-layer-${{ env.LAYER_NAME }} \
+            bash -c "cd /opt && zip -r9 /workspace/layer.zip python"
+
+      - name: Verify zip file exists
+        run: ls -lh "layers/${{ env.LAYER_NAME }}/output/layer.zip"
+
+      - name: Create or Update Latest GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest-${{ env.LAYER_NAME }}-layer3.12
+          name: Latest ${{ env.LAYER_NAME }} Lambda Layer
+          draft: false
+          prerelease: false
+          files: layers/${{ env.LAYER_NAME }}/output/layer.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_PAT_TOKEN }}
+
+  aws-publish-layer:
+    if: ${{ github.event.inputs.action == 'aws-publish' }}
+    runs-on: ubuntu-latest
+    env:
+      LAYER_NAME: ${{ github.event.inputs.layer_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set environment variables based on ENV_TYPE
+        run: |
+          if [ "${{ github.event.inputs.ENV_TYPE }}" = "DEV" ]; then
+            echo "AWS_ACCOUNT_ID=${{ vars.DEV_AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+          else
+            echo "AWS_ACCOUNT_ID=${{ vars.PROD_AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS credentials (OIDC Role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ vars.OIDC_ROLE }}"
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-oidc
+
+      - name: Assume application role
+        id: assume-app-role
+        run: |
+          CREDS_JSON=$(aws sts assume-role \
+            --role-arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ vars.ROLE_NAME }}" \
+            --role-session-name github-actions-app-role)
+          echo "AWS_ACCESS_KEY_ID=$(echo $CREDS_JSON | jq -r .Credentials.AccessKeyId)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $CREDS_JSON | jq -r .Credentials.SecretAccessKey)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $CREDS_JSON | jq -r .Credentials.SessionToken)" >> $GITHUB_ENV
+
+      - name: Download latest layer.zip from GitHub Release
+        run: |
+          gh release download latest-${{ env.LAYER_NAME }}-layer3.12 --pattern layer.zip --output ${{ env.LAYER_NAME }}.zip
+          if [ ! -s "${{ env.LAYER_NAME }}.zip" ]; then
+            echo "ERROR: Layer zip not found or empty!" >&2
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_PAT_TOKEN }}
+
+      - name: Publish Lambda Layer
+        run: |
+          aws lambda publish-layer-version \
+            --layer-name ${{ env.LAYER_NAME }} \
+            --zip-file fileb://${{ env.LAYER_NAME }}.zip \
+            --compatible-runtimes "python3.12"
+
+  create-and-publish-layer:
+    if: ${{ github.event.inputs.action == 'create-and-publish' }}
+    runs-on: ubuntu-latest
+    env:
+      LAYER_NAME: ${{ github.event.inputs.layer_name }}
+      PYTHON_VERSION: '3.12'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Build Lambda layer (Python3.12)
+        run: |
+          set -e
+          mkdir -p "${{ github.workspace }}/layers/${{ env.LAYER_NAME }}/output"
+
+          cat > Dockerfile <<'EOF'
+          FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+
+          RUN dnf install -y python3.12 python3.12-pip python3.12-devel \
+              gcc postgresql-devel zip jq && \
+              rm -rf /var/cache/dnf
+
+          WORKDIR /opt
+          COPY ${{ env.LAYER_NAME }}/requirements.txt .
+
+          ARG LAYER_NAME
+          RUN if [ "$LAYER_NAME" = "presidio" ]; then \
+                echo "Installing presidio with --no-deps --no-cache-dir..."; \
+                python3.12 -m pip install --no-cache-dir --no-deps -r requirements.txt -t python; \
+              else \
+                echo "Installing standard dependencies..."; \
+                python3.12 -m pip install --no-cache-dir -r requirements.txt -t python; \
+              fi
+          EOF
+
+          docker build --build-arg LAYER_NAME=${{ env.LAYER_NAME }} -t lambda-layer-${{ env.LAYER_NAME }} .
+          docker run --rm -v "${{ github.workspace }}/layers/${{ env.LAYER_NAME }}/output:/workspace" \
+            lambda-layer-${{ env.LAYER_NAME }} \
+            bash -c "cd /opt && zip -r9 /workspace/layer.zip python"
+
+      - name: Verify zip file exists
+        run: ls -lh "layers/${{ env.LAYER_NAME }}/output/layer.zip"
+
+      - name: Set AWS Account ID
+        run: |
+          if [ "${{ github.event.inputs.ENV_TYPE }}" = "DEV" ]; then
+            echo "AWS_ACCOUNT_ID=${{ vars.DEV_AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+          else
+            echo "AWS_ACCOUNT_ID=${{ vars.PROD_AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ vars.OIDC_ROLE }}"
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-oidc
+
+      - name: Assume application role
+        id: assume-app-role
+        run: |
+          CREDS_JSON=$(aws sts assume-role \
+            --role-arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ vars.ROLE_NAME }}" \
+            --role-session-name github-actions-app-role)
+          echo "AWS_ACCESS_KEY_ID=$(echo $CREDS_JSON | jq -r .Credentials.AccessKeyId)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $CREDS_JSON | jq -r .Credentials.SecretAccessKey)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $CREDS_JSON | jq -r .Credentials.SessionToken)" >> $GITHUB_ENV
+
+      - name: Publish Lambda Layer
+        run: |
+          echo "Publishing ${{ env.LAYER_NAME }} to AWS..."
+          aws lambda publish-layer-version \
+            --layer-name ${{ env.LAYER_NAME }} \
+            --zip-file fileb://layers/${{ env.LAYER_NAME }}/output/layer.zip \
+            --compatible-runtimes "python3.12"

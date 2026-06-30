@@ -1,0 +1,4 @@
+pyMuPDF
+pdf2image
+pypdf2
+pdfplumber

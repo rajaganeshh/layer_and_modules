@@ -1,0 +1,63 @@
+name: Build and Package the Lambda function
+run-name: Build and Package the Lambda ${{ inputs.function_name }} function
+
+on:
+  workflow_dispatch:
+    inputs:
+      function_name:
+        description: 'Lambda Layer name'
+        required: true
+        type: choice
+        options:
+          - scheduled-ticket
+          - scheduled-change
+          - scheduled-knowledge
+          - bedrock-supervisor
+          - bedrock-ticket
+          - bedrock-change
+          - bedrock-knowledge
+      ENV_TYPE:
+        description: 'Environment Type'
+        required: true
+        type: choice
+        options:
+        - DEV
+        - PROD
+
+permissions:
+  id-token: write
+  contents: read
+  checks: read
+  actions: write
+  packages: write
+
+jobs:
+  build-the-lambda-function:
+    # Only run if ENV_TYPE is PROD and branch is main, or ENV_TYPE is not PROD and branch is not main
+    if: ${{ (github.event.inputs.ENV_TYPE == 'PROD' && github.ref == 'refs/heads/main') || (github.event.inputs.ENV_TYPE != 'PROD' && github.ref != 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    env:
+      LAYER_NAME: ${{ github.event.inputs.function_name }}
+      PYTHON_VERSION: '3.13'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build the function package
+        run: |
+          cd lambdas/${{ env.LAYER_NAME }}
+          pwd
+          zip -r ${{ env.LAYER_NAME }}.zip *
+          ls -lrt
+
+      - name: Update the function package in GitHub Release
+        id: latest_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.LAYER_NAME }}-function
+          name: Latest ${{ env.LAYER_NAME }} Lambda Function
+          draft: false
+          prerelease: false
+          files: lambdas/${{ env.LAYER_NAME }}/${{ env.LAYER_NAME }}.zip  # attach the zip as release asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_PAT_TOKEN }}

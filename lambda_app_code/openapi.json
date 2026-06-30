@@ -1,0 +1,154 @@
+{
+  "openapi" : "3.0.1",
+  "info" : {
+    "title" : "AgenticAI Priority Tickets API",
+    "description" : "API for receiving P1 and P2 tickets from ServiceNow through Kong API.\nUsed by easyJet’s Major Incident Management (MIM) process and AgenticAI PoC.",
+    "version" : "1.0.0"
+  },
+  "tags" : [ {
+    "name" : "AgenticAI",
+    "description" : "Handles ServiceNow P1/P2 incident ingestion."
+  } ],
+  "paths" : {
+    "/comm/v1/prioritytickets" : {
+      "post" : {
+        "tags" : [ "AgenticAI" ],
+        "summary" : "Receive P1 and P2 tickets",
+        "description" : "Receives ServiceNow high-priority incidents from Kong Gateway.",
+        "operationId" : "createPriorityTicket",
+        "requestBody" : {
+          "required" : true,
+          "description" : "ServiceNow incident payload",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/PriorityTicket"
+              },
+              "example" : {
+                "incident_number" : "INC0012345",
+                "configuration_item" : "Network Switch 01",
+                "state" : "In Progress",
+                "assignment_group" : "IT Operations"
+              }
+            }
+          }
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Ticket received successfully",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/TicketResponse"
+                },
+                "example" : {
+                  "code" : 200,
+                  "message" : "Ticket processed successfully"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Invalid or missing fields in request",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                },
+                "example" : {
+                  "code" : "400",
+                  "message" : "Invalid payload"
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Unauthorized - Missing or invalid OAuth token",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                },
+                "example" : {
+                  "code" : "401",
+                  "message" : "Unauthorized"
+                }
+              }
+            }
+          },
+          "500" : {
+            "description" : "Internal server error",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                },
+                "example" : {
+                  "code" : "500",
+                  "message" : "Unexpected error occurred"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components" : {
+    "schemas" : {
+      "PriorityTicket" : {
+        "type" : "object",
+        "required" : [ "incident_number", "configuration_item", "state", "assignment_group" ],
+        "properties" : {
+          "incident_number" : {
+            "type" : "string",
+            "description" : "Unique ServiceNow incident number (e.g., INC0012345)",
+            "example" : "INC0012345"
+          },
+          "configuration_item" : {
+            "type" : "string",
+            "description" : "The affected configuration item",
+            "example" : "Email Server"
+          },
+          "state" : {
+            "type" : "string",
+            "description" : "Current state of the incident",
+            "example" : "In Progress"
+          },
+          "assignment_group" : {
+            "type" : "string",
+            "description" : "Assigned resolution group",
+            "example" : "Network Team"
+          }
+        }
+      },
+      "TicketResponse" : {
+        "type" : "object",
+        "properties" : {
+          "code" : {
+            "type" : "integer",
+            "example" : 200
+          },
+          "message" : {
+            "type" : "string",
+            "example" : "Ticket processed successfully"
+          }
+        }
+      },
+      "Error" : {
+        "type" : "object",
+        "required" : [ "code", "message" ],
+        "properties" : {
+          "code" : {
+            "type" : "string",
+            "example" : "400"
+          },
+          "message" : {
+            "type" : "string",
+            "example" : "Invalid request"
+          }
+        }
+      }
+    }
+  }
+}

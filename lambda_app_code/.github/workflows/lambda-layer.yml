@@ -1,0 +1,200 @@
+name: Build and Package the Lambda layer package
+run-name: Build and Package the Lambda ${{ inputs.layer_name }} layer package ${{ inputs.action }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      layer_name:
+        description: 'Lambda Layer name'
+        required: true
+        type: choice
+        options:
+          - psycopg2
+          - aiohttp
+          - bs4
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'create'
+        type: choice
+        options:
+          - create
+          - aws-publish
+          - kong_deploy
+      ENV_TYPE:
+        description: 'Environment Type'
+        required: true
+        type: choice
+        options:
+          - DEV
+          - PROD
+
+permissions:
+  id-token: write
+  contents: write
+  checks: read
+  actions: write
+  packages: write
+
+jobs:
+  # ------------------------------------------------------------------------
+  # 1️⃣ BUILD AND PACKAGE LAYER
+  # ------------------------------------------------------------------------
+  build-and-publish-layer:
+    if: ${{ github.event.inputs.action == 'create' }}
+    runs-on: ubuntu-latest
+    env:
+      LAYER_NAME: ${{ github.event.inputs.layer_name }}
+      PYTHON_VERSION: '3.13'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up GitHub credentials (for LFS and submodules)
+        run: |
+          git config --global url."https://${{ secrets.GH_PACKAGES_PAT_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
+      - name: Build Lambda Layer with Docker
+        run: |
+          mkdir -p "${{ github.workspace }}/${{ env.LAYER_NAME }}"
+          cat > Dockerfile <<'EOF'
+          FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+
+          RUN dnf install -y python3.13 python3.13-pip python3.13-devel \
+              gcc postgresql-devel zip
+
+          WORKDIR /opt
+          COPY ${{ env.LAYER_NAME }}/requirements.txt .
+          RUN pip3.13 install --no-cache-dir -r requirements.txt -t python
+          EOF
+
+          docker build -t lambda-py313-layer .
+          docker run --rm -v "${{ github.workspace }}/${{ env.LAYER_NAME }}:/workspace" lambda-py313-layer \
+            bash -c "cd /opt && zip -r9 /workspace/layer.zip python"
+
+      - name: Verify zip file exists
+        run: ls -lh "${{ github.workspace }}/${{ env.LAYER_NAME }}/layer.zip"
+
+      - name: Create or Update Latest GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest-${{ env.LAYER_NAME }}-layer
+          name: Latest ${{ env.LAYER_NAME }} Lambda Layer
+          draft: false
+          prerelease: false
+          files: ${{ github.workspace }}/${{ env.LAYER_NAME }}/layer.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_PAT_TOKEN }}
+
+  # ------------------------------------------------------------------------
+  # 2️⃣ AWS PUBLISH LAYER
+  # ------------------------------------------------------------------------
+  aws-publish-layer:
+    if: ${{ github.event.inputs.action == 'aws-publish' }}
+    runs-on: ubuntu-latest
+    env:
+      LAYER_NAME: ${{ github.event.inputs.layer_name }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set environment variables based on ENV_TYPE
+        run: |
+          if [ "${{ github.event.inputs.ENV_TYPE }}" = "DEV" ]; then
+            echo "AWS_ACCOUNT_ID=${{ vars.DEV_AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+          else
+            echo "AWS_ACCOUNT_ID=${{ vars.PROD_AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS credentials (OIDC Role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ vars.OIDC_ROLE }}"
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-oidc
+
+      - name: Assume application role
+        id: assume-app-role
+        run: |
+          CREDS_JSON=$(aws sts assume-role \
+            --role-arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ vars.ROLE_NAME }}" \
+            --role-session-name github-actions-app-role)
+          echo "AWS_ACCESS_KEY_ID=$(echo $CREDS_JSON | jq -r .Credentials.AccessKeyId)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $CREDS_JSON | jq -r .Credentials.SecretAccessKey)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $CREDS_JSON | jq -r .Credentials.SessionToken)" >> $GITHUB_ENV
+
+      - name: Download latest layer.zip from GitHub Release
+        run: |
+          gh release download latest-${{ env.LAYER_NAME }}-layer --pattern layer.zip --output ${{ env.LAYER_NAME }}.zip
+          if [ ! -s "${{ env.LAYER_NAME }}.zip" ]; then
+            echo "ERROR: Layer zip is missing or empty!" >&2
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_PAT_TOKEN }}
+
+      - name: Publish Lambda Layer
+        run: |
+          aws lambda publish-layer-version \
+            --layer-name ${{ env.LAYER_NAME }} \
+            --zip-file fileb://${{ env.LAYER_NAME }}.zip \
+            --compatible-runtimes "python3.13"
+
+  # ------------------------------------------------------------------------
+  # 3️⃣ KONG DEPLOYMENT (DEV → DEV & PREPROD, PROD → PROD)
+  # ------------------------------------------------------------------------
+  # ------------------------------------------------------------------------
+  # 3️⃣ KONG DEPLOYMENT (DEV → DEV & PREPROD, PROD → PROD)
+  # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
+  # 3️⃣ KONG DEPLOYMENT (DEV → DEV & PREPROD, PROD → PROD)
+  # ------------------------------------------------------------------------
+  Kong_deploy:
+    if: github.event.inputs.action == 'kong_deploy'
+    strategy:
+      matrix:
+        include: >-
+          ${{ fromJSON(
+            github.event.inputs.ENV_TYPE == 'DEV' && '[{"env_target":"DEV"},{"env_target":"PREPROD"}]' ||
+            github.event.inputs.ENV_TYPE == 'PROD' && '[{"env_target":"PROD"}]'
+          ) }}
+      max-parallel: 1
+
+    uses: easyjet-dev/apim-deployment/.github/workflows/rest-api-with-lambda-as-backend.yaml@main
+    with:
+      api_spec_path: swaggerhub/openapi.json
+      environment: ${{ matrix.env_target }}
+      runtime_group: >-
+        ${{
+          (github.event.inputs.ENV_TYPE == 'DEV' && matrix.env_target == 'DEV' && vars.DEV_RUNTIME_GROUP) ||
+          (github.event.inputs.ENV_TYPE == 'DEV' && matrix.env_target == 'PREPROD' && vars.PREPROD_RUNTIME_GROUP) ||
+          (github.event.inputs.ENV_TYPE == 'PROD' && matrix.env_target == 'PROD' && vars.PROD_RUNTIME_GROUP)
+        }}
+      apim_dns: >-
+        ${{
+          (github.event.inputs.ENV_TYPE == 'DEV' && matrix.env_target == 'DEV' && vars.DEV_APIM_DNS) ||
+          (github.event.inputs.ENV_TYPE == 'DEV' && matrix.env_target == 'PREPROD' && vars.PREPROD_APIM_DNS) ||
+          (github.event.inputs.ENV_TYPE == 'PROD' && matrix.env_target == 'PROD' && vars.PROD_APIM_DNS)
+        }}
+      OAUTH_CONFIG: >-
+        ${{
+          (github.event.inputs.ENV_TYPE == 'DEV' && matrix.env_target == 'DEV' && vars.DEV_OAUTH_CONFIG) ||
+          (github.event.inputs.ENV_TYPE == 'DEV' && matrix.env_target == 'PREPROD' && vars.PREPROD_OAUTH_CONFIG) ||
+          (github.event.inputs.ENV_TYPE == 'PROD' && matrix.env_target == 'PROD' && vars.PROD_OAUTH_CONFIG)
+        }}
+      functions_dictionary: >-
+        ${{
+          (github.event.inputs.ENV_TYPE == 'DEV' && matrix.env_target == 'DEV' && vars.DEV_FUNCTIONS_DICTIONARY) ||
+          (github.event.inputs.ENV_TYPE == 'DEV' && matrix.env_target == 'PREPROD' && vars.PREPROD_FUNCTIONS_DICTIONARY) ||
+          (github.event.inputs.ENV_TYPE == 'PROD' && matrix.env_target == 'PROD' && vars.PROD_FUNCTIONS_DICTIONARY)
+        }}
+      service_name: "ServiceNowEJ"
+      service_version: "1.0.0"
+      gateway-deployment-strategy: private
+      backend-stream-identifier: path
+    secrets:
+      apim_github_app_key: ${{ secrets.APIM_GH_APP_KEY }}
