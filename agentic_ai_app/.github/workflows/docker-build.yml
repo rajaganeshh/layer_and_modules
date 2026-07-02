@@ -1,0 +1,96 @@
+name: application - Build and Push Docker Image to Application Account
+
+on:
+  workflow_dispatch:
+    inputs:
+      ENV_TYPE:
+        description: 'Environment Type'
+        required: true
+        type: choice
+        options:
+        - DEV
+        - PROD
+      GOLDEN_IMAGE:
+        description: 'Golden image selection'
+        required: true
+        type: choice
+        options:
+        - "alpine"
+      APPLICATION_NAME:
+        description: 'Application Name'
+        required: true
+        type: choice
+        options:
+        - "frontend"
+        - "backend"
+        - "middleware"
+        - "interface"
+
+permissions:
+  id-token: write
+  contents: read
+  checks: read
+  actions: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GHCR_IMAGE: "ghcr.io/easyjet-dev/${{ github.event.inputs.GOLDEN_IMAGE }}_${{ github.event.inputs.APPLICATION_NAME }}:latest"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry (GHCR)
+        run: echo ${{ secrets.GH_PACKAGES_PAT_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull image from GHCR
+        run: |
+          docker pull ${{ env.GHCR_IMAGE }}
+
+      - name: Build new Docker image with src
+        run: |
+          docker build -f "services/${{ github.event.inputs.APPLICATION_NAME }}/Dockerfile" --build-arg BASE_IMAGE=${{ env.GHCR_IMAGE }} --build-arg APPLICATION_NAME=${{ github.event.inputs.APPLICATION_NAME }} -t ${{ github.event.inputs.APPLICATION_NAME }}:latest .
+
+      # Set AWS_ACCOUNT_ID based on ENV_TYPE
+      - name: Set environment variables based on ENV_TYPE
+        run: |
+          if [ "${{ github.event.inputs.ENV_TYPE }}" = "DEV" ]; then
+            echo "AWS_ACCOUNT_ID=${{ vars.DEV_AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+            echo "ECR_REPOSITORY=${{ vars.DEV_ECR_REPOSITORY }}" >> $GITHUB_ENV
+            # Add more DEV variables as needed
+          else
+            echo "AWS_ACCOUNT_ID=${{ vars.PROD_AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+            echo "ECR_REPOSITORY=${{ vars.PROD_ECR_REPOSITORY }}" >> $GITHUB_ENV
+            # Add more PROD variables as needed
+          fi
+
+      # 1. Authenticate to AWS using OIDC role
+      - name: Configure AWS credentials (OIDC Role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ vars.OIDC_ROLE }}"
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-oidc
+
+      # 2. Assume the application role using AWS CLI and export credentials
+      - name: Assume application role
+        id: assume-app-role
+        run: |
+          CREDS_JSON=$(aws sts assume-role \
+            --role-arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ vars.ROLE_NAME }}" \
+            --role-session-name github-actions-app-role)
+          echo "AWS_ACCESS_KEY_ID=$(echo $CREDS_JSON | jq -r .Credentials.AccessKeyId)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $CREDS_JSON | jq -r .Credentials.SecretAccessKey)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $CREDS_JSON | jq -r .Credentials.SessionToken)" >> $GITHUB_ENV
+
+      # 3. Login to Amazon ECR with application role credentials
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build new Docker image with src
+        run: |
+          docker tag "${{ github.event.inputs.APPLICATION_NAME }}:latest" "${{env.AWS_ACCOUNT_ID}}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/${{ github.event.inputs.APPLICATION_NAME }}:latest"
+          docker push "${{env.AWS_ACCOUNT_ID}}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/${{ github.event.inputs.APPLICATION_NAME }}:latest"

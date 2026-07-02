@@ -1,0 +1,26 @@
+# Use golden image as a build argument
+ARG BASE_IMAGE=alpine:latest
+FROM ${BASE_IMAGE}
+
+ARG APPLICATION_NAME
+
+# Install Python 3, pip, and build dependencies
+RUN apk update && apk upgrade && apk add --no-cache python3 py3-pip python3-dev build-base
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements file and install dependencies
+COPY services/${APPLICATION_NAME}/src/requirements.txt .
+
+
+# Use virtual environment to avoid "externally-managed-environment"
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# Make virtualenv binaries default
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set the default command to run your app (adjust as needed)
+CMD ["python", "--version"]

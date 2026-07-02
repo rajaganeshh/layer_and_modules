@@ -1,0 +1,88 @@
+name: GHCR - Build and Push Golden Image to GitHub Container Registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      GOLDEN_IMAGE:
+        description: 'Golden image selection'
+        required: true
+        type: choice
+        options:
+        - "alpine"
+      APPLICATION_NAME:
+        description: 'Application Name'
+        required: true
+        type: choice
+        options:
+        - frontend
+        - backend
+        - middleware
+        - interface
+
+permissions:
+  id-token: write
+  contents: read
+  checks: read
+  actions: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GHCR_IMAGE: "ghcr.io/easyjet-dev/alpine_${{ github.event.inputs.APPLICATION_NAME }}:latest"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # 1. Authenticate to AWS using OIDC role
+      - name: Configure AWS credentials (OIDC Role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GOLDEN_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-oidc
+
+      # 2. Assume the application role using AWS CLI and export credentials
+      - name: Assume application role
+        id: assume-app-role
+        run: |
+          CREDS_JSON=$(aws sts assume-role \
+            --role-arn arn:aws:iam::${{ vars.GLOBAL_AWS_ACCOUNT_ID }}:role/${{ vars.ROLE_NAME }} \
+            --role-session-name github-actions-app-role)
+          echo "AWS_ACCESS_KEY_ID=$(echo $CREDS_JSON | jq -r .Credentials.AccessKeyId)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $CREDS_JSON | jq -r .Credentials.SecretAccessKey)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $CREDS_JSON | jq -r .Credentials.SessionToken)" >> $GITHUB_ENV
+
+      # 3. Login to Amazon ECR with application role credentials
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      - name: Set BASE_IMAGE env
+        run: echo "BASE_IMAGE=${{ vars.ECR_REPOSITORY }}/${{ github.event.inputs.GOLDEN_IMAGE }}:latest" >> $GITHUB_ENV
+
+
+      - name: Pull base image (if needed)
+        run: |
+          docker pull ${{ env.BASE_IMAGE }}
+        # Pull and tag the golden image for GHCR
+
+      - name: build the nodejs
+        run: |
+           docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} --build-arg APPLICATION_NAME=${{ github.event.inputs.APPLICATION_NAME }} --label org.opencontainers.image.source="https://github.com/easyjet-dev/simon_agentic_ai_app" -t ${{ github.event.inputs.APPLICATION_NAME }}:latest .
+
+      - name: Login to GitHub Container Registry (GHCR)
+        run: echo ${{ secrets.GH_PACKAGES_PAT_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Push image to GHCR
+        run: |
+          docker tag "${{ github.event.inputs.APPLICATION_NAME }}:latest" ${{ env.GHCR_IMAGE }}
+          docker push ${{ env.GHCR_IMAGE }}
+
+#      - name: Push Docker image to ECR
+#        run: |
+#          docker tag ${{ github.event.inputs.APPLICATION_NAME }}:latest ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
+#          docker push ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest

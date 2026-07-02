@@ -1,0 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap');
+
+:root {
+  --va-primary: #b1125b;
+  --va-primary-dark: #7a003c;
+  --va-primary-soft: #d81b60;
+  --va-surface-tint: #fce7f1;
+  --va-text: #231a20;
+}
+
+body {
+  margin: 0;
+  font-family: 'Barlow', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  color: var(--va-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: 'Fira Code', Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+@keyframes dot-flash {
+  0% {
+    opacity: 0.2;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+  100% {
+    opacity: 0.2;
+    transform: scale(1);
+  }
+}
