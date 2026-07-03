@@ -6,9 +6,9 @@ import boto3
 import threading
 import requests
 import urllib3
+import logging
 import psycopg2
 import psycopg2.extras
-import logging
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
@@ -542,7 +542,8 @@ def search_top_k_by_embedding_pgvector(embedding, ci_value, short_description, t
 
         for r in rows:
             headers = {"Authorization": f"Bearer {sn_token}", "Accept": "application/json"}
-            sys_id = r.get("link")[-32:]
+            raw_link = r.get("link") or ""
+            sys_id = raw_link[-32:] if len(raw_link) >= 32 else raw_link
             params = {
                 "sysparm_query": f"sys_id={sys_id}",
                 "sysparm_display_value": "True",
@@ -976,6 +977,7 @@ def build_mim_blob(incident_id, irp_articles, knowledgebase):
 def lambda_handler(event, context):
  
     start_time = perf_counter()
+    incident_id = None  # ensure always defined for finally block
     logger.info("=== Action Lambda execution started ===")
     try:
         inc_id = None
@@ -1211,6 +1213,9 @@ def lambda_handler(event, context):
    
     finally:
         elapsed = perf_counter() - start_time
+        if not incident_id:
+            logger.warning("incident_id not set — skipping finally DB operations.")
+            return
         # ================= DO NOT CHANGE THIS ====================
         db_config = {
                 "dbname": db_name,
@@ -1219,92 +1224,94 @@ def lambda_handler(event, context):
                 "host": db_host,
                 "port": db_port,
             }
-        conn = psycopg2.connect(**db_config)
-        cursor = conn.cursor() 
-        
-
-        cursor.execute("select run_status from (SELECT inc_id, short_description, description, created_on, open_since, state, run_status, priority, configuration_item FROM (SELECT t2.inc_id, t2.short_description, t2.description, t2.raised_date AS created_on, t2.raised_date AS open_since, t2.state, t1.run_status, t2.priority, t2.configuration_item, ROW_NUMBER() OVER (PARTITION BY t2.inc_id ORDER BY CASE t1.run_status WHEN 'Processing Updates' THEN 0 WHEN 'CI Unavailable' THEN 1 WHEN 'Incident Processed' THEN 2 WHEN 'Incident Processing' THEN 3 WHEN 'Incident Received' THEN 4 ELSE 5 END ) AS rn FROM agent_run_status t1 LEFT JOIN p1p2_incidents t2 ON t1.incident_id = t2.inc_id) ranked WHERE rn = 1 ORDER BY run_status) where inc_id = %s;", (incident_id,))
-       
-        record = cursor.fetchone()
-        if record is None:
-            stat = "no record"
-        else: stat = record[0]
-        logger.info(record)
-
-        conn.commit()
-
-        logger.info(f"Agent run status: {stat}")
-
-
-
-        # update worknotes
-        if stat != "Processing Updates":
-            logger.info( f"Updating in url: {mim_interface_url}/interface/updateWorknote")
-            _resp = http.request("POST", f"{mim_interface_url}/interface/updateWorknote", headers={"Content-Type": "application/json"}, body=json.dumps({"incident_number":incident_id , "work_note": f"mim has processed the incident! Take a look at {mim_base_url}AgenticAI/{incident_id}"}))
-            logger.info(_resp)
-        else:
-            logger.info("Updating old incident , not updating worknotes")
-            
-        update_query = f"""              
-            UPDATE agent_run_status
-            SET run_status = %s
-            WHERE incident_id = %s;
-        """
-        cursor.execute(update_query,("Incident Processed",incident_id))
-        conn.commit()
-
-        # NextInQueue
-
-        cursor.execute("SELECT distinct incident_id FROM incident_update_queue WHERE processed = FALSE")
-        queuedInc = cursor.fetchall()
-        logger.info(f"Incident queue: {queuedInc}")
+        conn = None
+        cursor = None
         try:
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
 
-            incls = []
-            for i in queuedInc:
-                incls.append(i[0])
-            inList = incident_id in incls
-            logger.info(f"list of incidents: {incls} , present = {inList}")
-            if inList:
-                try:
-                    cursor.execute(f"SELECT configuration_item FROM p1p2_incidents where inc_id = '{incident_id}'")
-                    try: queuedCfg = cursor.fetchone()[0]
-                    except: queuedCfg = ""
+            cursor.execute("select run_status from (SELECT inc_id, short_description, description, created_on, open_since, state, run_status, priority, configuration_item FROM (SELECT t2.inc_id, t2.short_description, t2.description, t2.raised_date AS created_on, t2.raised_date AS open_since, t2.state, t1.run_status, t2.priority, t2.configuration_item, ROW_NUMBER() OVER (PARTITION BY t2.inc_id ORDER BY CASE t1.run_status WHEN 'Processing Updates' THEN 0 WHEN 'CI Unavailable' THEN 1 WHEN 'Incident Processed' THEN 2 WHEN 'Incident Processing' THEN 3 WHEN 'Incident Received' THEN 4 ELSE 5 END ) AS rn FROM agent_run_status t1 LEFT JOIN p1p2_incidents t2 ON t1.incident_id = t2.inc_id) ranked WHERE rn = 1 ORDER BY run_status) where inc_id = %s;", (incident_id,))
+           
+            record = cursor.fetchone()
+            if record is None:
+                stat = "no record"
+            else:
+                stat = record[0]
+            logger.info(record)
 
-                    request ={
-                        "incident_number": incident_id,
-                        "configuration_item": queuedCfg,
-                        "state": "In Progress",
-                        "created_on": datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-                    }
-                    logger.info(f"sending request to next in queue:{json.dumps(request)}")
-                    username = interface_user
-                    password = interface_pwd
-                    headers = make_headers(basic_auth=f'{username}:{password}')
-                    headers['Content-Type'] = 'application/json'
-                    
-                        
+            conn.commit()
+            logger.info(f"Agent run status: {stat}")
 
-                    response = http.request(
+            # update worknotes
+            if stat != "Processing Updates":
+                logger.info(f"Updating in url: {mim_interface_url}/interface/updateWorknote")
+                _resp = http.request("POST", f"{mim_interface_url}/interface/updateWorknote", headers={"Content-Type": "application/json"}, body=json.dumps({"incident_number": incident_id, "work_note": f"mim has processed the incident! Take a look at {mim_base_url}AgenticAI/{incident_id}"}))
+                logger.info(_resp)
+            else:
+                logger.info("Updating old incident , not updating worknotes")
+
+            update_query = """
+                UPDATE agent_run_status
+                SET run_status = %s
+                WHERE incident_id = %s;
+            """
+            cursor.execute(update_query, ("Incident Processed", incident_id))
+            conn.commit()
+
+            # NextInQueue
+            cursor.execute("SELECT distinct incident_id FROM incident_update_queue WHERE processed = FALSE")
+            queuedInc = cursor.fetchall()
+            logger.info(f"Incident queue: {queuedInc}")
+            try:
+                incls = [i[0] for i in queuedInc]
+                inList = incident_id in incls
+                logger.info(f"list of incidents: {incls} , present = {inList}")
+                if inList:
+                    try:
+                        cursor.execute(f"SELECT configuration_item FROM p1p2_incidents where inc_id = '{incident_id}'")
+                        try:
+                            queuedCfg = cursor.fetchone()[0]
+                        except Exception:
+                            queuedCfg = ""
+
+                        request = {
+                            "incident_number": incident_id,
+                            "configuration_item": queuedCfg,
+                            "state": "In Progress",
+                            "created_on": datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+                        }
+                        logger.info(f"sending request to next in queue:{json.dumps(request)}")
+                        headers = make_headers(basic_auth=f'{interface_user}:{interface_pwd}')
+                        headers['Content-Type'] = 'application/json'
+
+                        response = http.request(
                             method='POST',
                             url=f"{mim_interface_url}/interface/newIncident",
                             headers=headers,
-                            body=json.dumps(request) # send proper JSON
+                            body=json.dumps(request)
                         )
+                        logger.info(f'Result - {response.data.decode("utf-8")}')
 
-                    logger.info(f'Result - {response.data.decode('utf-8')}')
-                    # Clearing queue
-                    cursor.execute(f"UPDATE incident_update_queue SET processed = TRUE WHERE incident_id = '{incident_id}'")
-                    logger.info(f"Cleared queue for {incident_id}")
-                    conn.commit()
+                        cursor.execute(f"UPDATE incident_update_queue SET processed = TRUE WHERE incident_id = '{incident_id}'")
+                        logger.info(f"Cleared queue for {incident_id}")
+                        conn.commit()
 
+                    except Exception as e:
+                        logger.error(f"Error processing next in queue: {e}")
 
-                except Exception as e:
-                    logger.error(e)
+            except Exception as e:
+                logger.info(f"Incident queue empty, not calling next incident: {e}")
 
-        except Exception as e:
-            logger.info(f"Incident queue empty, not calling next incident {e}")
-        # ============= DO NOT CHANGE THIS ===============================
+        except Exception as finally_err:
+            logger.error(f"Error in finally DB block: {finally_err}")
+        finally:
+            if cursor:
+                try: cursor.close()
+                except Exception: pass
+            if conn:
+                try: conn.close()
+                except Exception: pass
+
         upload_logs_to_s3(context,inc_id=incident_id)
 
         try:

@@ -125,6 +125,7 @@ def lambda_handler(event, context):
                 })
                 logger.info(f"Agent {agent['agentId']} response: {response_text}")
             except Exception as e:
+                logger.error(f"Agent {agent['agentId']} invocation failed: {traceback.format_exc()}")
                 responses.append({
                     "agentId": agent["agentId"],
                     "error": str(e)
