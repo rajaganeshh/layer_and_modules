@@ -18,10 +18,13 @@ from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 from time import perf_counter
 from botocore.exceptions import ClientError
-import sharepoint_sum as sp_sum_mod  # day0 sharepoint summarizer
+# SharePoint summarization is intentionally disabled for this ServiceNow KB Lambda.
+# import sharepoint_sum as sp_sum_mod  # day0 sharepoint summarizer
+sp_sum_mod = None
 from summarize import summarize_text
-import pdfplumber
-from pdf2image import convert_from_path
+# SharePoint PDF parsing is intentionally disabled for this ServiceNow KB Lambda.
+# import pdfplumber
+# from pdf2image import convert_from_path
 from urllib3.util import make_headers
 
 # ====================== LOGGER ============================
@@ -76,16 +79,16 @@ sn_client_secret = configPythonSecrets["serviceNow"]["clientSecret"]
 sn_token_url = configPythonSecrets["serviceNow"]["tokenUrl"]
 sn_base_url = configPythonSecrets["serviceNow"]["baseUrl"]
 
-# Confluence
-conf_user = configPythonSecrets["confluence"]["user"]
-conf_token = configPythonSecrets["confluence"]["token"]
-conf_url = configPythonSecrets["confluence"]["url"]
+# Confluence is intentionally disabled; this Lambda now runs from a ServiceNow KB perspective only.
+conf_user = ""
+conf_token = ""
+conf_url = ""
 
-# SharePoint
-SHAREPOINT_TENANT_ID = configPythonSecrets["sharePoint"]["tenantId"]
-SHAREPOINT_CLIENT_ID = configPythonSecrets["sharePoint"]["clientId"]
-SHAREPOINT_CLIENT_SECRET = configPythonSecrets["sharePoint"]["clientSecret"]
-SHAREPOINT_THRESHOLD = configPythonSecrets["config"]["sharePoint"]["threshold"]
+# SharePoint is intentionally disabled; keep placeholders so old helper functions remain inert.
+SHAREPOINT_TENANT_ID = ""
+SHAREPOINT_CLIENT_ID = ""
+SHAREPOINT_CLIENT_SECRET = ""
+SHAREPOINT_THRESHOLD = 0
 
 # S3 Logging
 log_bucket = configPythonSecrets["lambdaLog"]["bucket"]
@@ -340,9 +343,8 @@ def insert_knowledge_vec(data, db_config, update_mode=False):
 #-----------------Config Function --------------------------
 def update_ci_from_config_secret(db_config, configPythonSecrets, overwrite_existing=False):
     """
-    Updates the 'ci' column in knowledge_vec for ServiceNow, SharePoint, and Confluence.
-    For Confluence: fetches all descendant *pages only* for each configured parent ID
-    and applies the same CI to them (no attachments included).
+    Updates the 'ci' column in knowledge_vec for ServiceNow records only.
+    SharePoint and Confluence CI mapping is intentionally disabled for this Lambda.
 
     Args:
         db_config (dict): Database connection settings.
@@ -355,17 +357,13 @@ def update_ci_from_config_secret(db_config, configPythonSecrets, overwrite_exist
             logger.warning("No 'config' section found in Secrets Manager data.")
             return
 
-        # Use Confluence credentials
-        conf_user_local = configPythonSecrets["confluence"]["user"]
-        conf_token_local = configPythonSecrets["confluence"]["token"]
-
         conn = psycopg2.connect(**db_config)
         cursor = conn.cursor()
         total_updates = 0
 
-        # Loop through all configured sources
+        # Loop through the ServiceNow source only.
         for source, ci_map in config_section.items():
-            if source not in ["serviceNow", "sharePoint", "confluence"]:
+            if source != "serviceNow":
                 logger.debug(f"Skipping unsupported source: {source}")
                 continue
 
@@ -381,87 +379,31 @@ def update_ci_from_config_secret(db_config, configPythonSecrets, overwrite_exist
                 # Iterate over each configured ID for that CI
                 for ci_id in id_list:
                     try:
-                        # --- CONFLUENCE SPECIAL LOGIC ---
-                        if source == "confluence":
-                            base_api = "https://api.atlassian.com/ex/confluence/45c68744-a379-4908-9bef-efb9c1ba643d/wiki"
-                            url = f"{base_api}/rest/api/content/{ci_id}/descendant/page"
-
-                            descendants = []
-                            logger.info(f"Fetching descendant pages for Confluence parent {ci_id}...")
-
-                            while url:
-                                resp = requests.get(url, auth=(conf_user_local, conf_token_local))
-                                if resp.status_code != 200:
-                                    logger.warning(f"Failed to fetch descendants for {ci_id}: {resp.status_code} - {resp.text}")
-                                    break
-                                data = resp.json()
-                                results = data.get("results", [])
-                                for r in results:
-                                    if r.get("type") == "page" and r.get("id"):
-                                        descendants.append(r["id"])
-                                next_link = (data.get("_links") or {}).get("next")
-                                url = base_api + next_link if next_link else None
-
-                            # Include parent page too
-                            all_ids = [ci_id] + descendants
-                            logger.info(f"  Changing CI for Confluence parent {ci_id} and {len(descendants)} descendant pages.")
-                            if descendants:
-                                logger.debug(f"    Descendant page IDs: {descendants}")
-
-                            for page_id in all_ids:
-                                if overwrite_existing:
-                                    cursor.execute(
-                                        """
-                                        UPDATE knowledge_vec
-                                        SET ci = %s
-                                        WHERE knowledge_id = %s::text
-                                          AND source ILIKE 'confluence'
-                                        """,
-                                        (ci_name, str(page_id))
-                                    )
-                                else:
-                                    cursor.execute(
-                                        """
-                                        UPDATE knowledge_vec
-                                        SET ci = %s
-                                        WHERE knowledge_id = %s::text
-                                          AND source ILIKE 'confluence'
-                                          AND (ci IS NULL OR ci = '')
-                                        """,
-                                        (ci_name, str(page_id))
-                                    )
-
-                                if cursor.rowcount > 0:
-                                    total_updates += cursor.rowcount
-                                    logger.debug(f"Updated CI for Confluence page {page_id} (from parent {ci_id}) → {ci_name}")
-
-                        # --- NORMAL SOURCES (ServiceNow, SharePoint) ---
+                        if overwrite_existing:
+                            cursor.execute(
+                                """
+                                UPDATE knowledge_vec
+                                SET ci = %s
+                                WHERE knowledge_id = %s::text
+                                  AND source ILIKE %s
+                                """,
+                                (ci_name, str(ci_id), source)
+                            )
                         else:
-                            if overwrite_existing:
-                                cursor.execute(
-                                    """
-                                    UPDATE knowledge_vec
-                                    SET ci = %s
-                                    WHERE knowledge_id = %s::text
-                                      AND source ILIKE %s
-                                    """,
-                                    (ci_name, str(ci_id), source)
-                                )
-                            else:
-                                cursor.execute(
-                                    """
-                                    UPDATE knowledge_vec
-                                    SET ci = %s
-                                    WHERE knowledge_id = %s::text
-                                      AND source ILIKE %s
-                                      AND (ci IS NULL OR ci = '')
-                                    """,
-                                    (ci_name, str(ci_id), source)
-                                )
+                            cursor.execute(
+                                """
+                                UPDATE knowledge_vec
+                                SET ci = %s
+                                WHERE knowledge_id = %s::text
+                                  AND source ILIKE %s
+                                  AND (ci IS NULL OR ci = '')
+                                """,
+                                (ci_name, str(ci_id), source)
+                            )
 
-                            if cursor.rowcount > 0:
-                                total_updates += cursor.rowcount
-                                logger.debug(f"Updated CI for {source}:{ci_id} → {ci_name}")
+                        if cursor.rowcount > 0:
+                            total_updates += cursor.rowcount
+                            logger.debug(f"Updated CI for {source}:{ci_id} -> {ci_name}")
 
                     except Exception as e:
                         logger.warning(f"Error updating CI for {source}:{ci_id} ({ci_name}): {e}")
@@ -1063,10 +1005,10 @@ def embedding_list_to_pgvector_literal(embedding):
 # Search using pgvector <-> operator, filter by CI or blank CI; return top N
 def search_top_k_by_embedding_pgvector(embedding, ci_value, short_description, top_k=6):
     """
-    Modified search logic:
-    - Only search where ci matches exactly (no null or blank CI)
-    - Run three separate searches for each source (ServiceNow, Confluence, SharePoint)
-    - Return combined list of results (each source can return 0..6 items)
+    ServiceNow KB search logic:
+    - Only search where CI matches exactly.
+    - Return ServiceNow knowledge-base results only.
+    - Confluence and SharePoint search logic is intentionally commented out/disabled.
     """
     conn = None
     cur = None
@@ -1081,284 +1023,58 @@ def search_top_k_by_embedding_pgvector(embedding, ci_value, short_description, t
             port=db_port
         )
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
- 
+
         vec_literal = embedding_list_to_pgvector_literal(embedding)
         if vec_literal is None:
             return combined_results
 
-        #-------------------ServiceNow--------------------
-        sources = ["ServiceNow"]
- 
-        for src in sources:
-            sql = """
-                SELECT 
-                    knowledge_id, link, summary, source, ci, 
-                    (embedding <-> %s::vector) AS distance
-                FROM knowledge_vec
-                WHERE ci ILIKE %s AND source ILIKE %s
-                ORDER BY distance ASC
-                LIMIT %s
-            """
-            cur.execute(sql, (vec_literal, ci_value, src, top_k))
-            rows = cur.fetchall()
- 
-            for r in rows:
-                headers = {"Authorization": f"Bearer {sn_token}", "Accept": "application/json"}
-                sys_id = r.get("link")[-32:]
-                params = {
-                    "sysparm_query": f"sys_id={sys_id}",
-                    "sysparm_display_value": "True",
-                    "sysparm_limit": 1,
-                    "sysparm_offset": 0,
-                    # "workflow_state": "published"
-                }
-                resp = http.request("GET", f"{sn_base_url}/api/now/table/kb_knowledge", headers=headers, fields=params)                    
-                if resp.status == 200:
-                    short_desc = ""
-                    data = json.loads(resp.data.decode("utf-8"))
-                    results = data.get("result", [])
-                    if len(results)>0:
-                        results = results[0]
-                        short_desc = results.get("short_description")
-                else:
-                    raise Exception(f"Failed to fetch knowledge article - {sys_id}: {resp.status} - {resp.data}")
-
-                combined_results.append({
-                    "knowledgeId": r.get("knowledge_id"),
-                    "link": r.get("link"),
-                    "summary": r.get("summary"),
-                    "source": r.get("source"),
-                    "ci": r.get("ci"),
-                    "distance": float(r.get("distance") or 0.0),
-                    "short_description": short_desc
-                })
-
-        # ------------------ CONFLUENCE  ------------------
-        db_config = {
-                "dbname": db_name,
-                "user": db_user,
-                "password": db_password,
-                "host": db_host,
-                "port": db_port,
-            }
-
-        try:
-
-            # Step 1: Format CI for Confluence Search
-            # e.g. "Simon As" -> "simon-as"
-            ci_for_conf = ci_value.lower().replace(" ", "-")
-
-            # Step 2: Fetch pages via Confluence API (label search)
-            # conf_base = "https://api.atlassian.com/ex/confluence/45c68744-a379-4908-9bef-efb9c1ba643d/wiki"
-            # conf_url = f"{conf_base}/rest/api/content/search"           
-            params = {
-                "expand": "metadata.labels",
-                "cql": f'type=page AND label="{ci_for_conf}"'
-            }
-            # getting conf_url from config file 
-            conf_resp = requests.get(url=conf_url, auth=(conf_user, conf_token), params=params, verify=False)
-
-            logger.info('\n')
-            logger.info("=========Results==========")
-            logger.info(f"Results: {conf_resp}")
-            logger.info("\n")
-
-            conf_page_ids = []
-            conf_api_title = {}
-            if conf_resp.status_code == 200:
-                conf_data = conf_resp.json()
-                conf_results = conf_data.get("results", [])
-                for r in conf_results:
-                    pid = r.get("id")
-                    conf_title = r.get("title", "NA")
-                    if pid:
-                        conf_page_ids.append(pid)
-                        conf_api_title[pid] = {
-                            "title" : conf_title
-                        }
-                logger.info(f"Confluence API returned {len(conf_page_ids)} pages for label '{ci_for_conf}'")
-            else:
-                logger.warning(f"Confluence API failed for '{ci_for_conf}': {conf_resp.status_code} - {conf_resp.text}")
- 
-            # Step 3: Vector DB search by CI  
-            conf_ci_results = []
-            
-            try:
-                
-                if ci_for_conf:
-                    sql_conf_subset = """
-                        SELECT knowledge_id, link, summary, source, ci
-                        FROM knowledge_vec
-                        WHERE source = 'Confluence' AND LOWER(ci) LIKE %s
-                    """
-                    like_pattern = f"%{ci_for_conf}%"
-                    cur.execute(sql_conf_subset, (like_pattern,))
-                    conf_ci_results = cur.fetchall()
-
- 
-                    logger.info(
-                        f"Matched {len(conf_ci_results)} Confluence DB rows where CI field contains '{ci_for_conf}'"
-                    )
-                else:
-                    logger.info("Incident CI is blank — skipping Confluence CI DB search.")
-            except Exception as e:
-                logger.warning(f"Confluence CI DB search failed: {e}")
- 
-            # Step 4: Keyword search 
-            conf_keyword_sql, llmout = _kb_sql_Confluence(ci_value, short_description)
-            logger.info(f"Keyword SQL: {conf_keyword_sql}")
-            logger.info(f"Keyword SQL: {llmout}")
-            cur.execute(conf_keyword_sql)
-            conf_keyword_results = cur.fetchall()
-            logger.info(f"Keyword results {conf_keyword_results}")
- 
-            # Step 5: Combine and de-duplicate by knowledgeId
-            all_conf = [] 
-            def add_unique(record_list, record):
-                if record and record["knowledgeId"] not in {r["knowledgeId"] for r in record_list}:
-                    record_list.append(record) 
-            # Add API pages (highest priority)
-            for pid in conf_page_ids:
-                summary_from_db = ""
-                try:
-                    # Always open a short-lived dedicated connection to ensure clean context
-                    with psycopg2.connect(**db_config) as conn_check:
-                        with conn_check.cursor() as cur_check:
-                            cur_check.execute("""
-                                SELECT summary
-                                FROM knowledge_vec
-                                WHERE TRIM(knowledge_id::text) = TRIM(%s)
-                                  AND source ILIKE 'Confluence'
-                                LIMIT 1;
-                            """, (str(pid),))
-                            row = cur_check.fetchone()
-                            if row and row[0]:
-                                summary_from_db = row[0]
-                            else:
-                                logger.debug(f"No summary found in DB for Confluence ID {pid}")
-                except Exception as e:
-                    logger.warning(f"DB summary lookup failed for Confluence page {pid}: {e}")
-
-                # fetch short desc for api search 
-
-
-
-                add_unique(all_conf, {
-                    "knowledgeId": str(pid),
-                    "link": f"https://easyjet.atlassian.net/wiki/pages/viewpage.action?pageId={pid}",
-                    "summary": summary_from_db,  # Use DB summary if found; else blank
-                    "source": "Confluence",
-                    "ci": ci_for_conf if ci_for_conf else "CI Not Tagged",
-                    "distance": 0.0,
-                    # Add title for result based on API search, if label exist
-                    "short_description" : conf_api_title.get(pid,{}).get("title") 
-                })            
-            # Add DB CI matches
-
-            if len(conf_ci_results)  != 0 :
-
-                conf_title = fetch_conf_title(conf_ci_results)
-
-           
-
-            for r in conf_ci_results:
-
-               
-
-
-
-                add_unique(all_conf, {
-                    "knowledgeId": r.get("knowledge_id"),
-                    "link": r.get("link"),
-                    "summary": r.get("summary"),
-                    "source": "Confluence",
-                    "ci": r.get("ci"),
-                    "distance": 0.0,
-                    "short_description" : conf_title.get(r.get("knowledge_id"),{}).get("title")
-                })
-
-
-                
- 
-            # Add keyword search results
-
-            if len(conf_keyword_results) !=0 : 
-                conf_title = fetch_conf_title(conf_keyword_results)
-                logger.info(f"Keyword search title {conf_title}")
-
-
-            for r in conf_keyword_results:
-                logger.info(f"title {conf_title.get(r.get("knowledge_id"),{}).get("title")}")
-                add_unique(all_conf, {
-                    "knowledgeId": r.get("knowledge_id"),
-                    "link": r.get("link"),
-                    "summary": r.get("summary"),
-                    "source": "Confluence",
-                    "ci": r.get("ci"),
-                    "distance": 0.0,
-                    "short_description" : conf_title.get(r.get("knowledge_id"),{}).get("title")
-                })
- 
-            # Step 6: Limit total to 6 results
-            deduped_conf = all_conf[:6]
- 
-            # Step 7: Add to final combined results
-            combined_results.extend(deduped_conf)
-            logger.info(f"Added {len(deduped_conf)} Confluence results (after merge/de-dupe)")
- 
-        except Exception as e:
-            logger.exception(f"Confluence  failed: {e}")
- 
-        #-----------------------Sharepoint-----------------------
-
-        # SQL Keyword search
-        extra_sql,out = _kb_sql_sharepoint(ci_value,short_description)
-        logger.info(f"Sharepoint SQL: {extra_sql}")
-        logger.info(f"Sharepoint llm's out: {out}")
-        cur.execute(extra_sql)
-        rows = cur.fetchall()
-        for r in rows:
-            summary = r.get("summary", "")
-            pattern = r"^(.*?)\.(docx|doc|xlsx|pdf|txt)"
-            match = re.match(pattern, summary, flags=re.IGNORECASE)
-            title = match.group(1) if match else ""
-
-            record = {
-                "knowledgeId": r.get("knowledge_id"),
-                "link": r.get("link"),
-                "summary": r.get("summary") if r.get("summary") != 'NIL' else "Non technical document and hence summary is not generated",
-                "source": r.get("source"),
-                "ci": r.get("ci"),
-                "distance": 0.0,
-                "short_description": title
-            }
-            if record not in combined_results:
-                combined_results.append(record)
-        
-        sql = f"""
-            SELECT knowledge_id, link, summary, source, ci
+        sql = """
+            SELECT
+                knowledge_id, link, summary, source, ci,
+                (embedding <-> %s::vector) AS distance
             FROM knowledge_vec
-            WHERE source ='Sharepoint' AND ci ILIKE '%{ci_value}%';
+            WHERE ci ILIKE %s AND source ILIKE %s
+            ORDER BY distance ASC
+            LIMIT %s
         """
-        cur.execute(sql)
+        cur.execute(sql, (vec_literal, ci_value, "ServiceNow", top_k))
         rows = cur.fetchall()
 
         for r in rows:
-            summary = r.get("summary", "")
-            pattern = r"^(.*?)\.(docx|doc|xlsx|pdf|txt)"
-            match = re.match(pattern, summary, flags=re.IGNORECASE)
-            title = match.group(1) if match else ""
+            headers = {"Authorization": f"Bearer {sn_token}", "Accept": "application/json"}
+            sys_id = r.get("link")[-32:]
+            params = {
+                "sysparm_query": f"sys_id={sys_id}",
+                "sysparm_display_value": "True",
+                "sysparm_limit": 1,
+                "sysparm_offset": 0,
+            }
+            resp = http.request("GET", f"{sn_base_url}/api/now/table/kb_knowledge", headers=headers, fields=params)
+            if resp.status != 200:
+                raise Exception(f"Failed to fetch knowledge article - {sys_id}: {resp.status} - {resp.data}")
+
+            short_desc = ""
+            data = json.loads(resp.data.decode("utf-8"))
+            results = data.get("result", [])
+            if results:
+                short_desc = results[0].get("short_description")
 
             combined_results.append({
                 "knowledgeId": r.get("knowledge_id"),
                 "link": r.get("link"),
-                "summary": r.get("summary") if r.get("summary") != 'NIL' else "Non technical document and hence summary is not generated",
+                "summary": r.get("summary"),
                 "source": r.get("source"),
-                "ci": ci_value,
-                "distance": 0.0,
-                "short_description": title
+                "ci": r.get("ci"),
+                "distance": float(r.get("distance") or 0.0),
+                "short_description": short_desc
             })
- 
+
+        # ------------------ CONFLUENCE DISABLED ------------------
+        # Confluence API, CI, and keyword search logic was removed from this execution path.
+
+        # ------------------ SHAREPOINT DISABLED ------------------
+        # SharePoint keyword and CI search logic was removed from this execution path.
+
     except Exception as e:
         logger.exception(f"Error running vector similarity search: {e}")
     finally:
@@ -1502,8 +1218,8 @@ def build_incident_combined_text(short_description, comments_worknotes, descript
 # Now integrate ingestion code into action lambda flow
 def action_lambda_run_h_ingestion(db_config):
     """
-    Run the  ingestion pipeline for ServiceNow, Confluence, SharePoint.
-    This reuses the same functions and logic from the scheduled lambda (kept intact).
+    Run the ingestion pipeline for ServiceNow only.
+    Confluence and SharePoint ingestion logic is intentionally disabled for this Lambda.
     """
     try:
         sn_token = get_access_token_sn()
@@ -1535,69 +1251,17 @@ def action_lambda_run_h_ingestion(db_config):
             except Exception as e:
                 logger.exception(f"ServiceNow updated thread failed: {e}")
 
-        # ========== Confluence Threads (Created + Updated) ==========
-        def run_confluence_created():
-            try:
-                get_confluence_pages_created_h(db_config)
-            except Exception as e:
-                logger.exception(f"Confluence created thread failed: {e}")
+        # ========== Confluence Disabled ==========
+        # def run_confluence_created(): ...
+        # def run_confluence_updated(): ...
 
-        def run_confluence_updated():
-            try:
-                get_confluence_pages_updated_h(db_config)
-            except Exception as e:
-                logger.exception(f"Confluence updated thread failed: {e}")
-
-        # ========== SharePoint Threads (Created + Updated) ==========
-        def run_sharepoint_created_updated():
-            try:
-                logger.info(f"Fetching SharePoint documents (last {time_window_hours} hours)...")
-                access_token = get_graph_token(SHAREPOINT_TENANT_ID, SHAREPOINT_CLIENT_ID, SHAREPOINT_CLIENT_SECRET)
-                graph_headers = {"Authorization": f"Bearer {access_token}"}
-
-                time_filter = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
-                sites = get_all_sites(graph_headers)
-                created_files, updated_files = [], []
-
-                logger.info(f"Found {len(sites)} SharePoint sites. Enumerating drives and files...")
-
-                for site in sites:
-                    site_id = site.get("id")
-                    try:
-                        drives = get_drives(site_id, graph_headers)
-                    except Exception:
-                        drives = []
-                    for drive in drives:
-                        try:
-                            created = get_files_recursive(drive["id"], graph_headers, time_filter, mode="created")
-                            updated = get_files_recursive(drive["id"], graph_headers, time_filter, mode="updated")
-                            created_files.extend(created or [])
-                            updated_files.extend(updated or [])
-                        except Exception:
-                            logger.debug(f"Could not list files for drive {drive.get('id')}")
-
-                if created_files:
-                    logger.info(f"Total SharePoint PDFs created in last {time_window_hours} hours: {len(created_files)}")
-                    asyncio.run(process_all_sharepoint_files(created_files, graph_headers, db_config, update_mode=False))
-                else:
-                    logger.info(f"No new SharePoint PDFs created in the last {time_window_hours} hours")
-
-                if updated_files:
-                    logger.info(f"Total SharePoint PDFs updated in last {time_window_hours} hours: {len(updated_files)}")
-                    asyncio.run(process_all_sharepoint_files(updated_files, graph_headers, db_config, update_mode=True))
-                else:
-                    logger.info(f"No SharePoint PDFs updated in the last {time_window_hours} hours")
-
-            except Exception as e:
-                logger.exception(f"SharePoint thread failed: {e}")
+        # ========== SharePoint Disabled ==========
+        # def run_sharepoint_created_updated(): ...
 
         # ======== Launch All Sources in Parallel Threads =========
         threads = [
             threading.Thread(target=run_servicenow_created),
             threading.Thread(target=run_servicenow_updated),
-            threading.Thread(target=run_confluence_created),
-            threading.Thread(target=run_confluence_updated),
-            threading.Thread(target=run_sharepoint_created_updated),
         ]
 
         for t in threads:
@@ -1838,6 +1502,7 @@ def fetch_irp_for_ci(impacted_ci, token):
         }]
 
 def fetch_teams(sim_id):
+    """MS Teams lookup is intentionally disabled for the ServiceNow KB-only Lambda."""
     if sim_id.__len__() == 0:
         return None
     elif sim_id.__len__() == 1:
