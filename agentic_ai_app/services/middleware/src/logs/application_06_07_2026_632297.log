@@ -1,2 +1,0 @@
-{"timestamp":"2026-07-06 19:06:35:220","tenant":"application","level":"warn","from":"logs to ss3","functionName":"logsToSS3","logMessage":"S3 log upload skipped due to temporary failure"}
-{"timestamp":"2026-07-06 19:06:44:951","tenant":"application","level":"warn","from":"logs to ss3","functionName":"logsToSS3","logMessage":"S3 log upload skipped due to temporary failure"}
