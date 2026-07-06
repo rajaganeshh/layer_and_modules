@@ -2,10 +2,10 @@ import psycopg2
   
 # Database connection details  
 db_config = {  
-    'dbname': 'postgres',  
-    'user': 'postgres',  
-    'password': 'rXtkKLpkt?~77e[TetRVEz.Wjpaj',  
-    'host': 'easyjet-db-1.cluster-cvyokiskw2z0.ap-south-1.rds.amazonaws.com',  
+    'dbname': '',  
+    'user': '',  
+    'password': '',  
+    'host': '',  
     'port': '5432'  # Default PostgreSQL port  
 }  
   

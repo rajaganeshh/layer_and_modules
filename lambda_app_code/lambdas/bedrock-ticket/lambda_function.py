@@ -829,14 +829,6 @@ def update_table():
         start_time -= timedelta(days=1)
     logger.info(f"UTC TIME FUNCTION HAS RUN FROM: {end_time}")
     timestamp = f"sys_updated_on%3Ejavascript%3Ags.dateGenerate('{start_time.date()}'%2C'04%3A30%3A00')"
-    
-
-    # use this for final
-    incidents = get_incidents(token, f'{sn_base_url}/api/now/table/incident?sysparm_display_value=true&sysparm_query={timestamp}^priorityIN1,2,3')
-    
-    T1_push , TH_push = _format_(incidents , token)
-    logger.info(f"Table updated for Timestamp : {timestamp}\n{T1_push.__len__()} items updated")
-    # Push here to T1 rdbms table
 
     db_config = {  
         'dbname': db_name,  
@@ -844,10 +836,45 @@ def update_table():
         'password': db_password,  
         'host': db_host,  
         'port': db_port
-    } 
+    }
 
-    insert_rdbms_data(T1_push, db_config)
-    insert_vector_data(TH_push, db_config)
+    BATCH_SIZE = 500
+    offset = 0
+    total_updated = 0
+
+    while True:
+        # Fetch one batch from ServiceNow using sysparm_limit + sysparm_offset
+        batch_url = (
+            f'{sn_base_url}/api/now/table/incident'
+            f'?sysparm_display_value=true'
+            f'&sysparm_query={timestamp}^priorityIN1,2,3'
+            f'&sysparm_limit={BATCH_SIZE}'
+            f'&sysparm_offset={offset}'
+        )
+        incidents = get_incidents(token, batch_url)
+        batch_results = incidents.get("result", [])
+
+        if not batch_results:
+            logger.info(f"No more incidents at offset {offset}. Pagination complete.")
+            break
+
+        logger.info(f"Processing batch: offset={offset}, count={len(batch_results)}")
+
+        T1_push, TH_push = _format_({"result": batch_results}, token)
+        insert_rdbms_data(T1_push, db_config)
+        insert_vector_data(TH_push, db_config)
+
+        total_updated += len(T1_push)
+        logger.info(f"Batch inserted. Running total: {total_updated} items")
+
+        # If fewer results than BATCH_SIZE came back, we've reached the last page
+        if len(batch_results) < BATCH_SIZE:
+            logger.info("Last batch reached. Pagination complete.")
+            break
+
+        offset += BATCH_SIZE
+
+    logger.info(f"Table update complete for Timestamp: {timestamp}. Total items updated: {total_updated}")
 
 #=================== Ticket Logic ===================
 
@@ -1031,7 +1058,8 @@ def sus_tickets( inc_id , db_config):
                 AND configuration_item = '{_cfgs[0]}'
                 AND previous_update > (SELECT raised_date - INTERVAL '3 days' FROM P1P2_Incidents
             		WHERE inc_id = '{inc_id}' limit 1)
-            ORDER BY raised_date DESC;
+            ORDER BY raised_date DESC
+            LIMIT 150;
             """
 
         else:
@@ -1041,7 +1069,8 @@ def sus_tickets( inc_id , db_config):
                 AND configuration_item in {_cfgs}
                 AND previous_update > (SELECT raised_date - INTERVAL '3 days' FROM P1P2_Incidents
             		WHERE inc_id = '{inc_id}' limit 1)
-            ORDER BY raised_date DESC;
+            ORDER BY raised_date DESC
+            LIMIT 150;
             """
 
 
@@ -1051,6 +1080,14 @@ def sus_tickets( inc_id , db_config):
         search_inc = []
         for row in rows:
             search_inc.append(f'{row[0]}')
+
+        # Cap to 150 most-recent incidents to avoid runaway LLM + embedding calls.
+        # The SQL already orders by raised_date DESC so we keep the most relevant ones.
+        MAX_INCIDENTS = 150
+        if len(search_inc) > MAX_INCIDENTS:
+            logger.info(f"Capping search_inc from {len(search_inc)} to {MAX_INCIDENTS} to prevent timeout")
+            search_inc = search_inc[:MAX_INCIDENTS]
+
         search_inc = tuple(search_inc)
 
         if search_inc.__len__()==0:
