@@ -1,0 +1,1 @@
+{"timestamp":"2026-07-06 20:29:51:676","tenant":"application_logs","level":"info","from":"index","functionName":"app.listen","logMessage":"Application startup","port":3001}

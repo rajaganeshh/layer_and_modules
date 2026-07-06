@@ -1,0 +1,1 @@
+{"timestamp":"2026-07-06 19:57:48:089","tenant":"middleware_logs","level":"info","from":"Logger middleware","functionName":"logger","logMessage":"Api success","path":"/middleware/health","status":200,"timeElapsed":"6 ms"}

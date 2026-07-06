@@ -1,0 +1,1 @@
+{"timestamp":"2026-07-06 20:46:00:466","tenant":"middleware_logs","level":"info","from":"index","functionName":"app.listen","logMessage":"Middleware startup","port":3001}

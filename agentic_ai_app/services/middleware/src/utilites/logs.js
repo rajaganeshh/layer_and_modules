@@ -39,11 +39,11 @@ const logFormatter = ({
 /**
  * Logger
  *
- * @param {string} [organizationName=application] - Organization Name. Default
- *   is `application`
+ * @param {string} [organizationName=application_logs] - Organization Name. Default
+ *   is `application_logs`
  * @returns {Logger} Winston Logger
  */
-const logger = (organizationName = "application") => {
+const logger = (organizationName = "application_logs") => {
   const options = {
     defaultMeta: { tenant: organizationName },
     transports: [
@@ -67,11 +67,11 @@ const loggers = {};
 /**
  * Writes logs to a log file '<loggerName_<DD_MM_YYYY>_<randomNumber>.log'
  *
- * @param {string} [loggerName=application] - Log File Name (Database
- *   Container). Default is `application`
+ * @param {string} [loggerName=application_logs] - Log File Name (Database
+ *   Container). Default is `application_logs`
  * @returns {Logger} Winston Logger
  */
-const log = (loggerName = "application") => {
+const log = (loggerName = "application_logs") => {
   if (loggers[loggerName]) return loggers[loggerName];
   const newLogger = logger(loggerName);
   loggers[loggerName] = newLogger;

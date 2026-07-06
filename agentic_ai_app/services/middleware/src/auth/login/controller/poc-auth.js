@@ -1,20 +1,23 @@
 const isValidCookieDomain = (domain) => {
-  if (!domain || typeof domain !== "string") {
+  if (!domain || typeof domain !== "string") return false;
+
+  const normalized = domain.trim();
+  if (!normalized) return false;
+
+  // Cookie domains must be plain hostnames (no scheme/path/port) and not localhost/IP.
+  if (normalized.includes("://") || normalized.includes("/") || normalized.includes(":")) {
     return false;
   }
+  if (normalized === "localhost") return false;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized)) return false;
 
-  const trimmed = domain.trim();
-  if (!trimmed || trimmed.toLowerCase() === "localhost") {
-    return false;
-  }
-
-  // RFC-friendly hostname pattern for cookie Domain attribute.
-  return /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(trimmed);
+  return /^[A-Za-z0-9.-]+$/.test(normalized);
 };
 
 const buildCookieOptions = (maxAge) => {
   const secrets = JSON.parse(process.env.secrets || "{}");
   const cookie = secrets.cookie || {};
+
   const options = {
     maxAge,
     secure: cookie.secure,
@@ -24,7 +27,7 @@ const buildCookieOptions = (maxAge) => {
   };
 
   if (isValidCookieDomain(cookie.domain)) {
-    options.domain = cookie.domain.trim();
+    options.domain = cookie.domain;
   }
 
   return options;
