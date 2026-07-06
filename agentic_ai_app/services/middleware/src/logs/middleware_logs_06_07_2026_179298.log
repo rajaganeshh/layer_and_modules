@@ -1,0 +1,2 @@
+{"timestamp":"2026-07-06 18:18:30:384","tenant":"middleware_logs","level":"info","from":"Logger middleware","functionName":"logger","logMessage":"Api success","path":"/middleware/authorizationurl","status":200,"timeElapsed":"5 ms"}
+{"timestamp":"2026-07-06 18:18:52:072","tenant":"middleware_logs","level":"info","from":"Logger middleware","functionName":"logger","logMessage":"Api success","path":"/middleware/authorizationurl","status":200,"timeElapsed":"1 ms"}

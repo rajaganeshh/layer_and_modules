@@ -29,6 +29,18 @@ module.exports.initMiddleware = () => {
 };
 
 /**
+ * this is for all POC auth routes
+ * @returns routers
+ */
+module.exports.auth = () => {
+  const router = express.Router();
+  config.getPath("./auth/!(base)/routes/*.js").forEach((route) => {
+    require(path.resolve(route))(router);
+  });
+  return router;
+};
+
+/**
  * this is for all incident routes in middleware
  * @returns
  */
@@ -40,12 +52,19 @@ module.exports.incident = () => {
   return router;
 };
 module.exports.initRoutes = (app) => {
+  const authRoutes = this.auth();
   const incidentRoutes = this.incident();
 
-  // Keep a basic health probe for POC runs without SSO/login routes.
-  app.get(`${apiPrefix}/health`, (_req, res) => {
-    res.status(200).send({ message: "Middleware is up" });
-  });
+  app.use(
+    apiPrefix,
+    [
+      cors({
+        origin: JSON.parse(process.env.secrets).app.origin,
+      }),
+      logger,
+    ],
+    authRoutes
+  );
 
   app.use(
     apiPrefix,

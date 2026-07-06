@@ -1,4 +1,4 @@
-const controller = require("../controller/auth");
+const controller = require("../controller/poc-auth");
 
 module.exports = (app) => {
   app.post("/authorizationurl", controller.authorizationUrlController);
