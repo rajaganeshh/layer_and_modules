@@ -1,15 +1,33 @@
+const isValidCookieDomain = (domain) => {
+  if (!domain || typeof domain !== "string") {
+    return false;
+  }
+
+  const trimmed = domain.trim();
+  if (!trimmed || trimmed.toLowerCase() === "localhost") {
+    return false;
+  }
+
+  // RFC-friendly hostname pattern for cookie Domain attribute.
+  return /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(trimmed);
+};
+
 const buildCookieOptions = (maxAge) => {
   const secrets = JSON.parse(process.env.secrets || "{}");
   const cookie = secrets.cookie || {};
-
-  return {
-    domain: cookie.domain,
+  const options = {
     maxAge,
     secure: cookie.secure,
     httpOnly: cookie.httpOnly,
     sameSite: cookie.sameSite,
     path: cookie.path || "/",
   };
+
+  if (isValidCookieDomain(cookie.domain)) {
+    options.domain = cookie.domain.trim();
+  }
+
+  return options;
 };
 
 const POC_USER_ID = "vaadmin";
