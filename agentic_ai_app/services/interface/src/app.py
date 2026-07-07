@@ -1,4 +1,4 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from datetime import datetime
 import boto3
 import json
@@ -16,7 +16,11 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import os
 import secrets
 from typing import Optional
+import watchtower
+import sys
  
+sys.tracebacklimit = 0
+
 # ====================== ENV ============================
 secret_name = os.environ['secret_name']
 region_name = os.environ['region_name']
@@ -63,18 +67,18 @@ app.add_middleware(
 )
 
 class newIncidentRequest(BaseModel):
-   incident_number: str
-   configuration_item: str
+   number: str
+   cmdb_ci: str
    state: str
-   created_on: str
+   sys_created_on: str
 
 class updateWorknote(BaseModel):
-   incident_number: str
+   number: str
    user_name: Optional[str] = None
    work_note: str
 
 class refreshIncidentRequest(BaseModel):
-   incident_number: str
+   number: str
 
 
 # ====================== SECRETS ============================
@@ -114,6 +118,34 @@ agentId = configPythonSecrets['bedrockAgent']['agentId']
 agentAliasId = configPythonSecrets['bedrockAgent']['agentAliasId']
 supervisorLambda = configPythonSecrets['supervisorLambda']
 
+##################LOGGING##############################
+def instantiate_logger():
+   log_buffer = io.StringIO()
+   logger = logging.getLogger(log_prefix)
+   logger.setLevel(logging.INFO)
+
+   # Local buffer handler
+   buffer_handler = logging.StreamHandler(log_buffer)
+   formatter = logging.Formatter('{"asctime": "%(asctime)s", "level": "%(levelname)s", "name": "%(name)s", "message": "%(message)s", "pathname": "%(pathname)s", "lineno": %(lineno)d}', datefmt='%Y-%m-%d %H:%M:%S')
+   buffer_handler.setFormatter(formatter)
+   logger.addHandler(buffer_handler)
+
+   # CloudWatch handler
+   cloudwatch_handler = watchtower.CloudWatchLogHandler(log_group=log_group, stream_name=log_stream)
+   cloudwatch_handler.setFormatter(formatter)
+   logger.addHandler(cloudwatch_handler)
+
+   return logger, log_buffer
+
+########################DB_CONFIF###############################
+db_config = {  
+         'dbname': db_name,  
+         'user': db_user,  
+         'password': db_password,  
+         'host': db_host,  
+         'port': db_port
+      } 
+
 # ====================== AUTHENTICATE ============================
 def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = secrets.compare_digest(credentials.username, interface_user)
@@ -134,50 +166,41 @@ def health():
 @app.post('/interface/newIncident')
 async def newIncident(request:newIncidentRequest, username: str = Depends(authenticate)):
    request_id = f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')}_{uuid.uuid4()}"
+   logger, log_buffer = instantiate_logger()
    logger.info('processing /interface/newIncident')
    try:
       s3_client = boto3.client('s3')
-      logger.info(f'Incident is {request.incident_number}')
-      logger.info(f'Configuration Item is {request.configuration_item}')
-      
-      
-      db_config = {  
-         'dbname': db_name,  
-         'user': db_user,  
-         'password': db_password,  
-         'host': db_host,  
-         'port': db_port
-      } 
-      
+      logger.info(f'Incident is {request.number}')
+      logger.info(f'Configuration Item is {request.cmdb_ci}')
 
       #check agent run status
-      agent_run_status = fetch_agent_run_status(request.incident_number, db_config)
-      logger.info(f"Agent Run Status for {request.incident_number} is {agent_run_status}")
+      agent_run_status = fetch_agent_run_status(request.number, db_config)
+      logger.info(f"Agent Run Status for {request.number} is {agent_run_status}")
 
       if agent_run_status in ('New Incident'):
-            if request.configuration_item is not "":
+            if request.cmdb_ci is not "":
                     Agent_Run_Status = {
                            "Entry_Time_STAMP" : datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           "Incident_ID" : request.incident_number,
+                           "Incident_ID" : request.number,
                            "Run_Status" : 'Incident Received',
                         }
             else:
                     Agent_Run_Status = {
                            "Entry_Time_STAMP" : datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           "Incident_ID" : request.incident_number,
+                           "Incident_ID" : request.number,
                            "Run_Status" : 'CI Unavailable',
                         }
       else:
-            if request.configuration_item is not "":
+            if request.cmdb_ci is not "":
                     Agent_Run_Status = {
                            "Entry_Time_STAMP" : datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           "Incident_ID" : request.incident_number,
+                           "Incident_ID" : request.number,
                            "Run_Status" : 'Processing Updates',
                         }
             else:
                     Agent_Run_Status = {
                            "Entry_Time_STAMP" : datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           "Incident_ID" : request.incident_number,
+                           "Incident_ID" : request.number,
                            "Run_Status" : 'CI Unavailable',
                         }
  
@@ -186,20 +209,16 @@ async def newIncident(request:newIncidentRequest, username: str = Depends(authen
             #insert in action run status table
             insert_agent_run_status_rdbms_data(Agent_Run_Status, db_config)
             #fetch all available inc details from snow
-            incident = fetch_inc_detail_from_snow(request.incident_number, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
+            incident = fetch_inc_detail_from_snow(request.number, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
             #format details from snow for p1p2_incidents table insertion
-            P1P2_IncidentTable_Item = format_data(incident, agent_run_status, request.incident_number, db_config)
+            P1P2_IncidentTable_Item = format_data(incident, agent_run_status, request.number, db_config)
             #insert formatted data to p1p2_incidents table
-            logger.info(P1P2_IncidentTable_Item)
             insert_rdbms_data(P1P2_IncidentTable_Item, db_config)
             
             #invoke bedrocksupervisor agent
-            if request.configuration_item is not "":
-                   # logger.info(f'Triggering Bedrock for {request.incident_number}')
-                   # bedrock_return = invoke_bedrock_supervisor_agent(agentId, agentAliasId, request.incident_number, request_id, region_name)
-                   # logger.info(f'Bedrock return - {bedrock_return}')
-                   logger.info(f'Triggering Supervisor Lambda for {request.incident_number}')
-                   lambda_return = invoke_lambda_supervisor(supervisorLambda, request.incident_number)
+            if request.cmdb_ci is not "":
+                   logger.info(f'Triggering Supervisor Lambda for {request.number}')
+                   lambda_return = invoke_lambda_supervisor(supervisorLambda, request.number)
                    logger.info(f'Supervisor Lambda return - {lambda_return}')
                    return JSONResponse(content = {"message": "P1/P2 Incident Received"}, status_code = 200)
             else:
@@ -209,35 +228,36 @@ async def newIncident(request:newIncidentRequest, username: str = Depends(authen
             #insert in action run status table
             insert_agent_run_status_rdbms_data(Agent_Run_Status, db_config)
             #fetch all available inc details from snow
-            incident = fetch_inc_detail_from_snow(request.incident_number, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
+            incident = fetch_inc_detail_from_snow(request.number, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
             #format details from snow for p1p2_incidents table insertion
-            P1P2_IncidentTable_Item = format_data(incident, agent_run_status, request.incident_number, db_config)
+            P1P2_IncidentTable_Item = format_data(incident, agent_run_status, request.number, db_config)
             #insert formatted data to p1p2_incidents table
-            logger.info(P1P2_IncidentTable_Item)
             insert_rdbms_data(P1P2_IncidentTable_Item, db_config)
             
             #invoke bedrocksupervisor agent
-            if request.configuration_item is not "":
-                   # logger.info(f'Triggering Bedrock for {request.incident_number}')
-                   # bedrock_return = invoke_bedrock_supervisor_agent(agentId, agentAliasId, request.incident_number, request_id, region_name)
-                   # logger.info(f'Bedrock return - {bedrock_return}')
-                   logger.info(f'Triggering Supervisor Lambda for {request.incident_number}')
-                   lambda_return = invoke_lambda_supervisor(supervisorLambda, request.incident_number)
-                   logger.info(f'Supervisor Lambda return - {lambda_return}')
-                   return JSONResponse(content = {"message": "Reprocessing an already processed incident"}, status_code = 200)
+            if request.cmdb_ci is not "":
+                  logger.info(f'Triggering Supervisor Lambda for {request.number}')
+                  lambda_return = invoke_lambda_supervisor(supervisorLambda, request.number)
+                  logger.info(f'Supervisor Lambda return - {lambda_return}')
+                  return JSONResponse(content = {"message": "Reprocessing an already processed incident"}, status_code = 200)
             else:
-                   return JSONResponse(content = {"message": "Configuration Item Empty"}, status_code = 200)
+                  return JSONResponse(content = {"message": "Configuration Item Empty"}, status_code = 200)
       else:
-            logger.info('Bedrock Call has been blocked')
-            return JSONResponse(content = {"message": "P1/P2 Incident in Processing or already Processed"}, status_code = 200)
+            if request.cmdb_ci is not "":
+                  logger.info('Request has been queued')
+                  queue_incident_update(request, db_config)
+                  return JSONResponse(content = {"message": "P1/P2 Incident in Processing or already Processed"}, status_code = 200)
+            else:
+                  return JSONResponse(content = {"message": "Configuration Item Empty"}, status_code = 200)
             
       
    except Exception as e:
-      logger.exception(e)
+      logger.exception(e, exc_info=False)
       return JSONResponse(content = {"message": "Some issue at our side"}, status_code = 400)
       
    finally:
-      log_contents = log_capture_string.getvalue()
+     
+      log_contents = log_buffer.getvalue()
       timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
       log_key = f"{log_prefix}/{datetime.today().strftime('%Y-%m-%d')}/{timestamp}_{request_id}_newIncident.log"
         
@@ -252,24 +272,16 @@ async def newIncident(request:newIncidentRequest, username: str = Depends(authen
 @app.post('/interface/refreshIncident')
 def refreshIncident(request:refreshIncidentRequest):
    request_id = f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')}_{uuid.uuid4()}"
+   logger, log_buffer = instantiate_logger()
    logger.info('processing /interface/refreshIncident')
    try:
       s3_client1 = boto3.client('s3')
-      logger.info(f'Incident is {request.incident_number}')  
+      logger.info(f'Incident is {request.number}')  
       
-      db_config = {  
-         'dbname': db_name,  
-         'user': db_user,  
-         'password': db_password,  
-         'host': db_host,  
-         'port': db_port
-      } 
-      
-
       #fetch all available inc details from snow
-      incident = fetch_inc_detail_from_snow(request.incident_number, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
+      incident = fetch_inc_detail_from_snow(request.number, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
       #format details from snow for p1p2_incidents table insertion
-      P1P2_IncidentTable_Item = format_data(incident, 'Incident Processed', request.incident_number, db_config)
+      P1P2_IncidentTable_Item = format_data(incident, 'Incident Processed', request.number, db_config)
       #insert formatted data to p1p2_incidents table
       insert_rdbms_data(P1P2_IncidentTable_Item, db_config)
 
@@ -277,11 +289,12 @@ def refreshIncident(request:refreshIncidentRequest):
             
       
    except Exception as e:
-      logger.exception(e)
+      logger.exception(e, exc_info=False)
       return JSONResponse(content = {"message": "Some issue at our side"}, status_code = 400)
       
    finally:
-      log_contents = log_capture_string.getvalue()
+      
+      log_contents = log_buffer.getvalue()
       timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
       log_key = f"{log_prefix}/{datetime.today().strftime('%Y-%m-%d')}/{timestamp}_{request_id}_refreshIncident.log"
         
@@ -296,26 +309,27 @@ def refreshIncident(request:refreshIncidentRequest):
 
 @app.post('/interface/updateWorknote')
 def updateWorknote(request:updateWorknote):
-     
    request_id = f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')}_{uuid.uuid4()}"
+   logger, log_buffer = instantiate_logger()
    logger.info('processing /interface/updateWorknote')
    try:
       s3_client2 = boto3.client('s3')
-      logger.info(f'Incident is {request.incident_number}')
+      logger.info(f'Incident is {request.number}')
       logger.info(f'WorkNote is {request.work_note}')
 
-      sys_id = fetch_sys_id(request.incident_number, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
+      sys_id = fetch_sys_id(request.number, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
 
       update_worknotes(sys_id, request.work_note, request.user_name, sn_base_url, sn_client_id, sn_client_secret, sn_token_url)
       
       return JSONResponse(content = {"message": "Updated to ServiceNow Worknotes"}, status_code = 200)
       
    except Exception as e:
-      logger.exception(e)
+      logger.exception(e, exc_info=False)
       return JSONResponse(content = {"message": "Some issue at our side"}, status_code = 400)
       
    finally:
-      log_contents = log_capture_string.getvalue()
+
+      log_contents = log_buffer.getvalue()
       timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
       log_key = f"{log_prefix}/{datetime.today().strftime('%Y-%m-%d')}/{timestamp}_{request_id}_updateWorknote.log"
         
