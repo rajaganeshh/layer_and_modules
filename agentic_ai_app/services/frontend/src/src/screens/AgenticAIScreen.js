@@ -88,9 +88,16 @@ const AgenticAIScreen = () => {
 
   const incidentCI = (
     selectedTicket?.ticketDetails?.configurationItem ||
+    selectedTicket?.ticketDetails?.configuration_item ||
     selectedTicket?.ticketDetails?.cmdb_ci ||
     selectedTicket?.ticketDetails?.cmdbCi ||
+    selectedTicket?.ticketDetails?.ci ||
     selectedTicket?.configurationItem ||
+    selectedTicket?.cmdb_ci ||
+    selectedTicket?.cmdbCi ||
+    selectedTicket?.ci ||
+    selectedTicket?.suspectedIncidents?.[0]?.configurationItem ||
+    selectedTicket?.suspectedChanges?.[0]?.configurationItem ||
     ""
   ).toLowerCase();
 
