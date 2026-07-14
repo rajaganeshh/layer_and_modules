@@ -94,8 +94,18 @@ const AgenticAIScreen = () => {
     ""
   ).toLowerCase();
 
-  const isTravelboxCI = incidentCI.includes("tbox") || incidentCI.includes("travelbox");
-  const isVaaWebsiteCI = incidentCI.includes("vaa website") || incidentCI.includes("vaa web site");
+  // Normalize CI text so matching works across case, punctuation, and spacing variants.
+  const normalizedIncidentCI = incidentCI
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const compactIncidentCI = normalizedIncidentCI.replace(/\s+/g, "");
+  const isTravelboxCI =
+    normalizedIncidentCI.includes("tbox") ||
+    normalizedIncidentCI.includes("travelbox") ||
+    compactIncidentCI.includes("tboxtravelbox");
+  const isVaaWebsiteCI = compactIncidentCI.includes("vaawebsite");
 
   const ciTranscriptRows = isTravelboxCI
     ? [
