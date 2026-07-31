@@ -82,6 +82,61 @@ const AgenticAIScreen = () => {
    const [focusedField,setFocusedField] = useState("")
 
   const rowsPerPage = 3;
+  const currentIncidentId =
+    selectedTicket?.ticketDetails?.incidentId ||
+    selectedTicket?.incidentId ||
+    ticketId ||
+    "NIL";
+
+  const incidentCI = (
+    selectedTicket?.ticketDetails?.configurationItem ||
+    selectedTicket?.ticketDetails?.configuration_item ||
+    selectedTicket?.ticketDetails?.cmdb_ci ||
+    selectedTicket?.ticketDetails?.cmdbCi ||
+    selectedTicket?.ticketDetails?.ci ||
+    selectedTicket?.configurationItem ||
+    selectedTicket?.cmdb_ci ||
+    selectedTicket?.cmdbCi ||
+    selectedTicket?.ci ||
+    selectedTicket?.suspectedIncidents?.[0]?.configurationItem ||
+    selectedTicket?.suspectedChanges?.[0]?.configurationItem ||
+    ""
+  ).toLowerCase();
+
+  // Normalize CI text so matching works across case, punctuation, and spacing variants.
+  const normalizedIncidentCI = incidentCI
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const compactIncidentCI = normalizedIncidentCI.replace(/\s+/g, "");
+  const isTravelboxCI =
+    normalizedIncidentCI.includes("tbox") ||
+    normalizedIncidentCI.includes("travelbox") ||
+    compactIncidentCI.includes("tboxtravelbox");
+  const isVaaWebsiteCI = compactIncidentCI.includes("vaawebsite");
+
+  const ciTranscriptRows = isTravelboxCI
+    ? [
+        {
+          source: "Teams-0234",
+          incidentId: currentIncidentId,
+          link: "https://example.com/Teams-0234",
+          summary:
+            "Speaker 1: Users reported that they were unable to log in to the TravelBox application and received authentication errors. Speaker 2: After reviewing application and identity provider logs, the team identified that the Azure AD client secret used for authentication had expired, causing login requests to fail. Speaker 3: A new client secret was generated, the application configuration was updated, and the services were redeployed successfully. Post-deployment validation confirmed that users could log in normally, and the TravelBox application was restored to full functionality. The team also recommended implementing secret expiry monitoring and renewal alerts to prevent similar issues in the future.",
+        },
+      ]
+    : isVaaWebsiteCI
+    ? [
+        {
+          source: "Teams-0345",
+          incidentId: currentIncidentId,
+          link: "https://example.com/Teams-0345",
+          summary:
+            "Speaker 1: Users reported that they were unable to complete ticket bookings in the VAA Website application, with transactions failing during the payment confirmation stage. Speaker 2: The support team analyzed application logs and identified that the booking service was unable to communicate with the payment gateway due to a temporary API connectivity issue. Speaker 3: The team restored the integration by updating the API endpoint configuration and restarting the affected services. After conducting end-to-end testing, ticket bookings were processed successfully, payments were confirmed, and confirmation notifications were delivered to users. The issue was resolved, and monitoring was enhanced to detect similar integration failures proactively.",
+        },
+      ]
+    : selectedTicket?.transcripts || [];
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
     const [anchorEl, setAnchorEl] = useState(null);
     const handleProfileMenuOpen = (event) => {
@@ -140,7 +195,7 @@ const AgenticAIScreen = () => {
   const handleAddBulletPoint = () => {
   showLoader()
   let params ={
-   incident_number: selectedTicket?.ticketDetails?.incidentId ? selectedTicket?.ticketDetails?.incidentId  : "",
+   number: selectedTicket?.ticketDetails?.incidentId ? selectedTicket?.ticketDetails?.incidentId  : "",
    user_name: userDetails?.displayName ? userDetails?.displayName : "",
    work_note: inputValue ? inputValue : "",
     }
@@ -159,7 +214,7 @@ const AgenticAIScreen = () => {
       setInputValue(""); // Clear the input field
       // handleAgenticAI()
       let params = {
-        incident_number:selectedTicket.ticketDetails.incidentId,
+        number:selectedTicket.ticketDetails.incidentId,
       }
       RefreshWorkNotes(params).then((response) => {
         handleAgenticAI()
@@ -246,6 +301,10 @@ const AgenticAIScreen = () => {
 
     handleApiCalls();
   }, []);
+
+  useEffect(() => {
+    setTranscriptsPage(0);
+  }, [ticketId, incidentCI]);
 
   const StatusDot = ({ color = "green" }) => (
     <Avatar
@@ -1224,7 +1283,7 @@ const handleBack = () => {
               Knowledge Base
             </Typography>
 
-            {/* Table Section */}
+            {/*
             <TableContainer
               component={Paper}
               sx={{
@@ -1390,6 +1449,7 @@ const handleBack = () => {
                 </TableBody>
               </Table>
             </TableContainer>
+            */}
           </Box>
           <Box
             sx={{
@@ -1577,8 +1637,8 @@ const handleBack = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {selectedTicket?.transcripts?.length > 0 ? (
-                    selectedTicket?.transcripts
+                  {ciTranscriptRows?.length > 0 ? (
+                    ciTranscriptRows
                       .slice(
                         transcriptsPage * rowsPerPage,
                         transcriptsPage * rowsPerPage + rowsPerPage
@@ -1589,11 +1649,14 @@ const handleBack = () => {
                             {row.source || "NIL"}
                           </TableCell>
                           <TableCell sx={{ width: "300px" }}>
-                            <a href={row.link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ textDecoration: "none", color: "blue" }}>{row.incidentId||"NIL"} </a>
-                            {/* {row.incidentId || "NIL"} */}
+                            {row.link ? (
+                              <a href={row.link}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ textDecoration: "none", color: "blue" }}>{row.incidentId||"NIL"} </a>
+                            ) : (
+                              row.incidentId || "NIL"
+                            )}
                           </TableCell>
                           <TableCell sx={{ width: "500px" }}>
                             <Box
@@ -1652,7 +1715,7 @@ const handleBack = () => {
             </TableContainer>
             <TablePagination
               component="div"
-              count={selectedTicket?.transcripts?.length || 0}
+              count={ciTranscriptRows?.length || 0}
               page={transcriptsPage}
               onPageChange={(event, newPage) => setTranscriptsPage(newPage)}
               rowsPerPage={rowsPerPage}
