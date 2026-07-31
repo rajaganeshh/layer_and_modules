@@ -17,24 +17,21 @@ import traceback
 import json
 from typing import Dict, Any
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from scheduledSharepoint import sharepoint_invoker
+from scheduledTeams import teams_helper
 from scheduled_knowledge import knowledge_handler
 from session_scheduler import session_scheduler
 import watchtower
 import sys
+
+sys.tracebacklimit = 0
+
 # ====================== ENV ============================
 secret_name = os.environ['secret_name']
 region_name = os.environ['region_name']
 
-#=====================LOGGING==========================
-# Set up in-memory logging
-log_capture_string = io.StringIO()
-ch = logging.StreamHandler(log_capture_string)
-ch.setLevel(logging.DEBUG)
 
-# Get logger
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
-logger.addHandler(ch)
 s3_client = boto3.client('s3')
 
 
@@ -49,8 +46,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-   
-   
+
+
 class fetchProcessedIncident(BaseModel):
    pass
 
@@ -82,7 +79,11 @@ db_user = configPythonSecrets['database']['user']
 db_password = configPythonSecrets['database']['password']
 log_bucket = configPythonSecrets['pythonBackendLog']['bucket']
 log_prefix = configPythonSecrets['pythonBackendLog']['prefix']
+log_group = configPythonSecrets['pythonBackendLog']['logGroup']
+log_stream = configPythonSecrets['pythonBackendLog']['logStream']
+# llm_model = configPythonSecrets['bedrock']['llm']
 
+#=====================LOGGING==========================
 
 def instantiate_logger():
    log_buffer = io.StringIO()
@@ -103,6 +104,29 @@ def instantiate_logger():
 
    return logger, log_buffer
 
+# # =================== Chat Util Function =============================
+# def _llm_(prompt, region_name = region_name , llm_model = llm_model):
+
+#     client = boto3.client("bedrock-runtime", region_name=region_name)
+
+#     native_request = {
+#         "anthropic_version": "bedrock-2023-05-31",
+#         "max_tokens": 300,
+#         "temperature": 0,
+#         "messages": [
+#             {
+#                 "role": "user",
+#                 "content": [{"type": "text", "text": prompt}],
+#             }
+#         ],
+#     }
+
+#     request = json.dumps(native_request)
+#     response = client.invoke_model(modelId=llm_model, body=request)
+#     model_response = json.loads(response["body"].read())
+
+#     return model_response["content"][0]["text"].strip()
+
 @app.get("/backend/health")
 def health():
    return{'msg':f'Connected to server on {datetime.today().date()} at {datetime.today().strftime('%H:%M:%S')}'}
@@ -111,16 +135,17 @@ def health():
 @app.get('/backend/getAllIncidents', response_model=fetchProcessedIncident)
 async def getAllIncidents():
    request_id = f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')}_{uuid.uuid4()}"
+   logger, log_buffer = instantiate_logger()
    logger.info('processing /backend/getAllIncidents')
-   
+
    try:
-      db_config = {  
-         'dbname': db_name,  
-         'user': db_user,  
-         'password': db_password,  
-         'host': db_host,  
+      db_config = {
+         'dbname': db_name,
+         'user': db_user,
+         'password': db_password,
+         'host': db_host,
          'port': db_port
-      } 
+      }
       allIncidents = fetch_all_incidents(db_config)
       logger.info(f"all incident - {allIncidents}")
       keys = ['incidentId', 'shortDescription', 'description', 'createdOn', 'openSince', 'state', 'agentRunStatus', 'priority', 'configurationItem']
@@ -134,54 +159,56 @@ async def getAllIncidents():
       logger.info(dict_list)
       return JSONResponse(content={"message": dict_list}, status_code=200)
    except Exception as e:
-      logger.error(e, exc_info = False) 
+      logger.error(e, exc_info = False)   
       return JSONResponse(content = {"message": "Some issue at our side"}, status_code = 400)
    finally:
       log_contents = log_buffer.getvalue()
       timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
       log_key = f"{log_prefix}/{datetime.today().strftime('%Y-%m-%d')}/{timestamp}_{request_id}_getAllIncidents.log"
-        
+
       s3_client.put_object(
             Bucket=log_bucket,
             Key=log_key,
             Body=log_contents,
             ContentType='text/plain'
         )
-
+      
 
 @app.get('/backend/getIncident', response_model=fetchProcessedIncident)
 async def getIncident(incId : str):
    request_id = f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')}_{uuid.uuid4()}"
    logger, log_buffer = instantiate_logger()
    logger.info('processing /backend/getIncident')
-   
+
    try:
-      db_config = {  
-         'dbname': db_name,  
-         'user': db_user,  
-         'password': db_password,  
-         'host': db_host,  
+      db_config = {
+         'dbname': db_name,
+         'user': db_user,
+         'password': db_password,
+         'host': db_host,
          'port': db_port
-      } 
+      }
       mimAgentOutput = fetch_mim_agent_output(incId, db_config)
       status = fetch_agent_run_status(incId, db_config)
       mimAgentOutput["status"]=status
       logger.info(f"status : {mimAgentOutput["status"]}")
+      # logger.info(f"mim agent output {mimAgentOutput}")
       return JSONResponse(content={"message": mimAgentOutput}, status_code=200)
    except Exception as e:
-      logger.exception(e)
+      logger.error(e, exc_info = False)   
       return JSONResponse(content = {"message": "Some issue at our side"}, status_code = 400)
    finally:
-      log_contents = log_capture_string.getvalue()
+      log_contents = log_buffer.getvalue()
       timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
       log_key = f"{log_prefix}/{datetime.today().strftime('%Y-%m-%d')}/{timestamp}_{request_id}_getIncident.log"
-        
+
       s3_client.put_object(
             Bucket=log_bucket,
             Key=log_key,
             Body=log_contents,
             ContentType='text/plain'
         )
+      
 
 @app.post('/backend/chatbot')
 async def chatbot(body:Dict[Any,Any]):
@@ -295,11 +322,28 @@ async def chatbot(body:Dict[Any,Any]):
             ContentType='text/plain'
         )
       
+
 # ====================== KNOWLEDGE SCHEDULER ============================
 def scheduled_task():
    request_id = f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')}_{uuid.uuid4()}"
    logger, log_buffer = instantiate_logger()
    logger.info("Scheduled task started.")
+   logger.info("SharePoint process...")
+   try:
+      sharepoint_invoker()
+      logger.info("SharePoint process completed.")
+   except Exception as e:
+      err_msg = f"Error in SharePoint process- {str(e).replace(':', ' - ').replace('\"', '\'')}"
+      logger.error(err_msg, exc_info = False)
+
+   logger.info("Teams transcript process...")
+   try:
+      teams_helper()
+      logger.info("Teams transcript process completed.")
+   except Exception as e:
+      err_msg = f"Error in Teams transcript process- {str(e).replace(':', ' - ').replace('\"', '\'')}"
+      logger.error(err_msg, exc_info = False)
+
    logger.info("Knowledge processing...")
    try:
       knowledge_handler()
@@ -317,7 +361,11 @@ def scheduled_task():
          Key=log_key,
          Body=log_contents,
          ContentType='text/plain'
-      )      
+      )
+      # logger.removeHandler(ch)
+      
+
+
 
 
 #======================= SESSION SCHEDULER ==============================
@@ -347,6 +395,9 @@ def session_scheduled_task():
          Body=log_contents,
          ContentType='text/plain'
       )
+           
+
+
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(scheduled_task, 'cron',hour=2,minute=30)
@@ -359,4 +410,4 @@ def startup_event():
 
 @app.on_event("shutdown")
 def shutdown_event():
-    scheduler.shutdown()      
+    scheduler.shutdown()

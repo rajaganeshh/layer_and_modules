@@ -458,7 +458,7 @@ def fetch_inc():
     #timestamp = "sys_updated_on%3Ejavascript%3Ags.beginningOfLast6Months()" 
     logger.info(f"API call for timestamp details: {timestamp}")
     # use this for final
-    incidents = get_incidents(token, f'{sn_base_url}/api/now/table/incident?sysparm_display_value=true&sysparm_query={timestamp}^priorityIN1,2,3')
+    incidents = get_incidents(token, f'{sn_base_url}/api/now/table/incident?sysparm_display_value=true&sysparm_query={timestamp}^numberININC1495423,INC1495424,INC1495425')
     
 
     T1_push , TH_push = _format_(incidents , token)

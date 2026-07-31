@@ -1,0 +1,18 @@
+# Lambda bundled dependencies (use Lambda Layers instead)
+**/urllib3/
+**/urllib3-*.dist-info/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Layer zip files
+*.zip
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/

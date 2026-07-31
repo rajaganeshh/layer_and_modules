@@ -4,4 +4,4 @@ boto3
 uvicorn
 urllib3
 APScheduler
-watchtower
+watchtower 

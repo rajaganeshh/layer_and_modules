@@ -190,29 +190,29 @@ def _format_(response):
        
         # Need to change this
         _chunk = {
-            "sys_id": item["sys_id"],
-            "number": item["number"],
-            "start_date": item["start_date"],
-            "end_date": item["end_date"],
-            "sys_updated_on": item["sys_updated_on"],
-            "sys_created_on": item["sys_created_on"],
-            "cmdb_ci": item["cmdb_ci"],
-            "business_service": item["business_service"],
-            "assignment_group": item["assignment_group"],
-            "category": item["category"],
-            "impact": item["impact"],
-            "priority": item["priority"],
-            "short_description": item["short_description"],
-            "description": item["description"],
-            "justification": item["justification"],
-            "risk_impact_analysis": item["risk_impact_analysis"],
-            "implementation_plan": item["implementation_plan"],
-            "backout_plan": item["backout_plan"],
-            "test_plan": item["test_plan"],
-            "u_post_implementation_testing": item["u_post_implementation_testing"],
-            "u_relevant_documentation_updated": item["u_relevant_documentation_updated"],
-            "comments_and_work_notes": item["comments_and_work_notes"],
-            "upon_reject": item["upon_reject"]
+            "sys_id": item.get("sys_id"),
+            "number": item.get("number"),
+            "start_date": item.get("start_date"),
+            "end_date": item.get("end_date"),
+            "sys_updated_on": item.get("sys_updated_on"),
+            "sys_created_on": item.get("sys_created_on"),
+            "cmdb_ci": item.get("cmdb_ci"),
+            "business_service": item.get("business_service"),
+            "assignment_group": item.get("assignment_group"),
+            "category": item.get("category"),
+            "impact": item.get("impact"),
+            "priority": item.get("priority"),
+            "short_description": item.get("short_description"),
+            "description": item.get("description"),
+            "justification": item.get("justification"),
+            "risk_impact_analysis": item.get("risk_impact_analysis"),
+            "implementation_plan": item.get("implementation_plan"),
+            "backout_plan": item.get("backout_plan"),
+            "test_plan": item.get("test_plan"),
+            "u_post_implementation_testing": item.get("u_post_implementation_testing"),
+            "u_relevant_documentation_updated": item.get("u_relevant_documentation_updated"),
+            "comments_and_work_notes": item.get("comments_and_work_notes"),
+            "upon_reject": item.get("upon_reject")
         }
  
         # Need to change this
@@ -359,7 +359,7 @@ class ServiceNowChangesProcessor:
         logger.info(f"Fetching changes updated since: {start_time_str}")
         
         params = {
-            'sysparm_query': f'sys_updated_on>={start_time_str}',
+            'sysparm_query': 'numberINCHG00012676',
             'sysparm_fields': 'sys_id,start_date,end_date,number,upon_reject, sys_updated_on, test_plan, cmdb_ci, impact, priority, implementation_plan, short_description, u_post_implementation_testing, comments_and_work_notes, backout_plan, business_service, assignment_group, description, justification, risk_impact_analysis, sys_created_on,u_relevant_documentation_updated,category',
             'sysparm_limit': batch_size,
             'sysparm_offset': 0,

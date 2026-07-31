@@ -1,0 +1,28 @@
+.venv
+.env
+services/local
+package-lock.json
+
+
+# Node
+/services/middleware/node_modules
+/services/middleware/config/app/cert
+/services/middleware/logs
+/services/middleware/config/env/config.js
+/services/middleware/src/configs.json
+/services/middleware/src/logs
+/services/middleware/src/node_modules
+
+# React
+/services/frontend/src/node_modules
+/services/frontend/src/src/.pnp
+/services/frontend/src/src/.pnp.js
+/services/frontend/src/src/.DS_Store
+/services/frontend/src/src/.env.local
+/services/frontend/src/src/.env.development.local
+/services/frontend/src/src/.env.test.local
+/services/frontend/src/src/.env.production.local
+
+/services/frontend/src/src/npm-debug.log*
+/services/frontend/src/src/yarn-debug.log*
+/services/frontend/src/src/yarn-error.log*

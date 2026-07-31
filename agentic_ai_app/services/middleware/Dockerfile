@@ -1,14 +1,16 @@
-FROM d_alpine:latest
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
 
 
 # Copy the src folder from the build context into the image
-COPY services/middleware/src/package*.json /app/
+ARG APPLICATION_NAME
+COPY services/${APPLICATION_NAME}/src/package*.json /app/
 
 WORKDIR /app
 
 RUN npm cache clean --force && npm install --legacy-peer-deps
  
-COPY services/middleware/src/ /app/
+COPY services/${APPLICATION_NAME}/src/ /app/
  
 #Build reactapp
 RUN pwd && ls -ltr *

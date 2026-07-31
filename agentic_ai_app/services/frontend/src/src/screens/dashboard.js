@@ -83,7 +83,7 @@ const getStatusColor = (status) => {
     case "New":
       return "red";
     case "In Progress":
-      return "#B1125B";
+      return "orange";
     case "Resolved":
       return "green";
     case "Closed":
@@ -97,6 +97,7 @@ const Dashboard = () => {
   const {
     setSelectedTicket,
     setIncidents,
+    setStatus,
     incidents,
     showLoader,
     hideLoader,
@@ -189,26 +190,7 @@ const Dashboard = () => {
   const today = new Date()
   const formattedTodayDate = format(today,"dd-MM-yyyy")
 
-  // Filter tickets based on tab, search query, and date range
-  // const filteredTickets = incidents.filter((ticket) => {
-  //   // Convert the "Created" date to a Date object
-  //   const createdDate = new Date(ticket.createdOn);
 
-  //   // Check tabValue filters
-  //   if (tabValue === 1 && ticket.state !== "New") return false;
-  //   if (tabValue === 2 && ticket.state !== "In Progress") return false;
-  //   if (tabValue === 3 && ticket.state !== "Resolved") return false;
-  //   if (tabValue === 4 && ticket.state !== "Closed") return false;
-
-  //   // Check search query filter
-  //   if (searchQuery && !ticket.incidentId.includes(searchQuery)) return false;
-
-  //   // Check date filters
-  //   if (fromDate && createdDate <= new Date(fromDate)) return false; // Compare "Created" with "From Date"
-  //   if (toDate && createdDate >= new Date(toDate)) return false; // Compare "Created" with "To Date"
-
-  //   return true; // If all conditions pass, include the ticket
-  // });
   const filteredTickets = incidents.filter((ticket) => {
   // Convert the "Created" date to a Date object
   const createdDate = new Date(ticket.createdOn);
@@ -233,7 +215,8 @@ const Dashboard = () => {
   if (tabValue === 4 && ticket.state !== "Closed") return false;
  
   // Check search query filter
-  if (searchQuery && !ticket.incidentId.includes(searchQuery)) return false;
+  // if (searchQuery && !ticket.incidentId.includes(searchQuery)) return false;
+  if (searchQuery && !ticket?.incidentId?.includes(searchQuery)) return false
  
   // Check date filters
   if (normalizedFromDate && normalizedCreatedDate < normalizedFromDate)
@@ -277,7 +260,8 @@ const Dashboard = () => {
     showLoader();
     GetIncident(ticket.incidentId)
       .then((response) => {
-        setSelectedTicket(response.data.message); // Store the ticket in global state
+        setSelectedTicket(response.data.message); 
+        setStatus(ticket.agentRunStatus)// Store the ticket in global state
         navigate(`/AgenticAI/${ticket.incidentId}`);
         hideLoader();
       })
@@ -331,7 +315,7 @@ const Dashboard = () => {
             >
               <Typography
                 sx={{
-                  color: "#B1125B",
+                  color: "rgb(255, 98, 0)",
                   fontWeight: "bold",
                   fontSize: "20px",
                 }}
@@ -348,17 +332,17 @@ const Dashboard = () => {
                     "& .MuiOutlinedInput-root": {
                       borderRadius: "10px",
                       "&:hover fieldset": {
-                        borderColor: "#D81B60", // Orange border on hover
+                        borderColor: "rgb(255, 165, 0)", // Orange border on hover
                       },
                       "&.Mui-focused fieldset": {
-                        borderColor: "#D81B60", // Orange border on focus
+                        borderColor: "rgb(255, 165, 0)", // Orange border on focus
                       },
                     },
                     "& .MuiInputLabel-root": {
                       color: "rgba(0, 0, 0, 0.6)", // Default label color
                     },
                     "& .MuiInputLabel-root.Mui-focused": {
-                      color: "#D81B60", // Orange label on focus
+                      color: "rgb(255, 165, 0)", // Orange label on focus
                     },
                   }}
                   InputProps={{
@@ -377,10 +361,10 @@ const Dashboard = () => {
                     color="primary"
                     aria-label="refresh"
                     sx={{
-                      backgroundColor: "#B1125B",
+                      backgroundColor: "rgb(255, 98, 0)",
                       color: "white",
                       "&:hover": {
-                        backgroundColor: "#D81B60", // Darker orange on hover
+                        backgroundColor: "rgb(255, 165, 0)", // Darker orange on hover
                       },
                     }}
                   >
@@ -463,7 +447,7 @@ const Dashboard = () => {
                   borderBottom: 1,
                   borderColor: "divider",
                   "& .MuiTabs-indicator": {
-                    backgroundColor: "#B1125B",
+                    backgroundColor: "orange",
                   },
                 }}
               >
@@ -475,9 +459,9 @@ const Dashboard = () => {
                       sx={{
                         fontSize: "0.875rem",
                         fontWeight: "bold",
-                        color: tabValue === index ? "#B1125B" : "inherit",
+                        color: tabValue === index ? "orange" : "inherit",
                         "&.Mui-selected": {
-                          color: "#B1125B",
+                          color: "orange",
                         },
                       }}
                     />
@@ -535,7 +519,7 @@ const Dashboard = () => {
               sx={{ marginTop: 2, borderRadius: "10px" }}
             >
               <Table>
-                <TableHead sx={{ backgroundColor: "#B1125B" }}>
+                <TableHead sx={{ backgroundColor: "rgb(255, 98, 0)" }}>
                   <TableRow sx={{ height: "2rem" }}>
                     <TableCell
                       sx={{
@@ -544,17 +528,9 @@ const Dashboard = () => {
                         fontWeight: "bold",
                       }}
                     >
-                      <TableSortLabel
-                        active={sortConfig.key === "incidentId"}
-                        direction={
-                          sortConfig.key === "incidentId"
-                            ? sortConfig.direction
-                            : "asc"
-                        }
-                        onClick={() => handleSort("incidentId")}
-                      >
+                  
                         Incident ID
-                      </TableSortLabel>
+                    
                     </TableCell>
                     <TableCell
                       sx={{
@@ -609,7 +585,7 @@ const Dashboard = () => {
                         fontWeight: "bold",
                       }}
                     >
-                      MIM Status
+                      Simon Status
                     </TableCell>
                     <TableCell
                       sx={{
@@ -873,4 +849,3 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-

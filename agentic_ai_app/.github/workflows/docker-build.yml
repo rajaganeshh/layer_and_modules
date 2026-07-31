@@ -1,4 +1,5 @@
 name: application - Build and Push Docker Image to Application Account
+run-name: application - Build and Push Docker ${{ inputs.APPLICATION_NAME }} Image to Application Account
 
 on:
   workflow_dispatch:

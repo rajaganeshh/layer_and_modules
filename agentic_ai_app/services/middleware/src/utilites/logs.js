@@ -1,6 +1,7 @@
-const { format, createLogger, Logger } = require("winston");
+const { format, createLogger, Logger} = require("winston");
 const DailyRotateFile = require("winston-daily-rotate-file");
 const { randomNumber } = require("../config/app/constant");
+const WinstonCloudwatch = require("winston-cloudwatch");
 
 const { combine, timestamp, printf } = format;
 const logFormatter = ({
@@ -33,17 +34,30 @@ const logFormatter = ({
     logData["errorString"] = error.toString();
     logData["stringifiedError"] = JSON.stringify(error);
   }
+
+  // this is for passing the logs to cloudwatch
+  const logger= createLogger({
+     transports: [
+    new WinstonCloudwatch({
+      logGroupName: JSON.parse(process.env.secrets).s3.logGroupName,
+      logStreamName: JSON.parse(process.env.secrets).s3.logStreamName,
+      awsRegion: process.env.region,
+      jsonMessage: true,
+    })
+  ]
+  })
+logger.info(logData);
   return JSON.stringify(logData);
 };
 
 /**
  * Logger
  *
- * @param {string} [organizationName=application_logs] - Organization Name. Default
- *   is `application_logs`
+ * @param {string} [organizationName=application] - Organization Name. Default
+ *   is `application`
  * @returns {Logger} Winston Logger
  */
-const logger = (organizationName = "application_logs") => {
+const logger = (organizationName = "application") => {
   const options = {
     defaultMeta: { tenant: organizationName },
     transports: [
@@ -67,11 +81,11 @@ const loggers = {};
 /**
  * Writes logs to a log file '<loggerName_<DD_MM_YYYY>_<randomNumber>.log'
  *
- * @param {string} [loggerName=application_logs] - Log File Name (Database
- *   Container). Default is `application_logs`
+ * @param {string} [loggerName=application] - Log File Name (Database
+ *   Container). Default is `application`
  * @returns {Logger} Winston Logger
  */
-const log = (loggerName = "application_logs") => {
+const log = (loggerName = "application") => {
   if (loggers[loggerName]) return loggers[loggerName];
   const newLogger = logger(loggerName);
   loggers[loggerName] = newLogger;

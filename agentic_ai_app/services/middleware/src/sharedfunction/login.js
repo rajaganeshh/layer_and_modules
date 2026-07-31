@@ -31,6 +31,7 @@ module.exports.accessToken = async (code, redirectUrl, appConfig) => {
       client_secret: clientSecret,
       /* eslint-enable camelcase */
     };
+    
     const path = `${JSON.parse(process.env.secrets).officeCredentials.endpoint}${tenantId}${JSON.parse(process.env.secrets).officeCredentials.tokenPath}`;
     const requestBody = [];
     for (const params in tokenParams) {
@@ -46,6 +47,7 @@ module.exports.accessToken = async (code, redirectUrl, appConfig) => {
     const response = await fetch(path, options);
     const token = await response.json();
     if (!response.ok) {
+      
       throw new AuthenticationError("Access Token Failes", {
         cause: token,
         status: 403,

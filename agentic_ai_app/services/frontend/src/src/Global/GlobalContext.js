@@ -10,12 +10,13 @@ export const GlobalProvider = ({ children }) => {
    const [loading, setLoading] = useState(false);
     const [userDetails, setUserDetails] = useState(false);
       const [incidents, setIncidents] = useState([]);
+      const[status, setStatus] = useState("")
 
   const showLoader = () => setLoading(true);
   const hideLoader = () => setLoading(false);
 
   return (
-    <GlobalContext.Provider value={{ selectedTicket, setSelectedTicket, showLoader, hideLoader,loading,userDetails, setUserDetails,incidents, setIncidents }}>
+    <GlobalContext.Provider value={{ status, setStatus, selectedTicket, setSelectedTicket, showLoader, hideLoader,loading,userDetails, setUserDetails,incidents, setIncidents }}>
       {children}
     </GlobalContext.Provider>
   );

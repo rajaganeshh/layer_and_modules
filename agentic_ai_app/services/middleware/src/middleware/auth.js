@@ -17,11 +17,11 @@ module.exports.auth = async (req, res, next) => {
     if (routes["No-Authentication"].includes(endPointName)) return next();
     const { session: authorization } = req.cookies;
     //check session cookie is there or not
-    if (!authorization) throw new AppError("No auth token", { status: 403 });
+    if (!authorization) throw new AppError("Session Expired, Redirecting to login page", { status: 401 });
     const session = await getSession(authorization);
     if (!session)
-      throw new AppError("No session is there for a logged in user", {
-        status: 403,
+      throw new AppError("Session Expired, Redirecting to login page", {
+        status: 401,
       });
     //need to authenticate the user request
     const userDetails = await profile(session.accessToken).catch((error) => {
@@ -30,7 +30,7 @@ module.exports.auth = async (req, res, next) => {
     req.locals = { userDetails };
     next();
   } catch (error) {
-    error.status ??= 403;
+    error.status ??= 401;
     next(error);
   }
 };

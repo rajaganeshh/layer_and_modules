@@ -34,12 +34,12 @@ import {
 } from "@mui/icons-material";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import SendIcon from "@mui/icons-material/Send";
-import mimImage from "../assets/mim_Image.png";
+import SimonImage from "../assets/Simon_Image.png";
 import AccountCircleIcon from "@mui/icons-material/AccountCircle";
 import ChatAssistant from "../components/ChatAssistant"; // Import the ChatAssistant component
 import { useGlobalContext } from "../Global/GlobalContext";
 import { DataViewer, HolidayPopup } from "../components/DataViewer";
-
+import RefreshIcon from "@mui/icons-material/Refresh";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -55,6 +55,8 @@ const AgenticAIScreen = () => {
   const {
     selectedTicket,
     setSelectedTicket,
+    setStatus,
+    status,
     showLoader,
     hideLoader,
     setUserDetails,
@@ -274,8 +276,34 @@ const handleKeyDown = (e) => {
 }
 
 const handleBack = () => {
-  navigate("/vaa")
+  navigate("/easyjet")
 }
+
+  const handleRefresh = () => {
+    showLoader()
+     GetIncident(ticketId)
+      .then((response) => {
+        setSelectedTicket(response.data.message); // Store the ticket in global state
+        setBulletPoints(response.data.message.worknotes)
+        hideLoader();
+          let params = {
+        incident_number:selectedTicket?.ticketDetails.incidentId?selectedTicket?.ticketDetails.incidentId:"",
+      }
+      RefreshWorkNotes(params).then((response) => {
+        // setBulletPoints(response.data.message)
+        hideLoader()
+      })
+      .catch((error) => {
+        toast.error(error.response.data.message)
+        hideLoader()
+        
+      })
+      })
+      .catch((error) => {
+        toast.error(error.response.data.message);
+        hideLoader();
+      });
+  };
 
   return (
     <Box
@@ -312,7 +340,7 @@ const handleBack = () => {
              <IconButton
               onClick ={() => handleBack()}
               size="small"
-                sx={{ ml: 1, color: "#B1125B" }}><KeyboardArrowLeft/></IconButton>
+                sx={{ ml: 1, color: "orange" }}><KeyboardArrowLeft/></IconButton>
             <Box
               sx={{
                 display: "flex",
@@ -375,11 +403,39 @@ const handleBack = () => {
               </IconButton>
             </Box>
             </Box>
-
-            {/* Right End: Profile Icon */}
-            <IconButton sx={{ color: "black" }} onClick={handleProfileMenuOpen}>
+            <Box sx={{display:"flex",gap:1}}>
+             <Tooltip title="Refresh">
+                               <IconButton
+                                 onClick={handleRefresh}
+                                 color="primary"
+                                 aria-label="refresh"
+                                 sx={{
+                                  
+                                   color: "black",
+                                   "&:hover": {
+                                     backgroundColor: "rgba(255, 106, 0, 1)",
+                                     color:"white", // Darker orange on hover
+                                   },
+                                 }}
+                               >
+                                 <RefreshIcon />
+                               </IconButton>
+                             </Tooltip>
+             <Tooltip title = "Profile">
+              <IconButton sx={{ color: "black",
+                "&:hover": {
+                                     backgroundColor: "rgba(255, 106, 0, 1)",
+                                     color:"white", // Darker orange on hover
+                                   },
+               }} onClick={handleProfileMenuOpen}>
               <AccountCircleIcon />
             </IconButton>
+             </Tooltip>
+
+            </Box>
+
+            {/* Right End: Profile Icon */}
+          
           </Toolbar>
         </AppBar>
 
@@ -444,7 +500,7 @@ const handleBack = () => {
             <Card
               sx={{
                 flex: 1,
-                backgroundColor: "#FCE7F1",
+                backgroundColor: "rgb(250, 222, 173)",
                 borderRadius: "10px",
                 boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.2)",
               }}
@@ -470,7 +526,7 @@ const handleBack = () => {
             <Card
               sx={{
                 flex: 1,
-                backgroundColor: "#FCE7F1",
+                backgroundColor: "rgb(250, 222, 173)",
                 borderRadius: "10px",
                 boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.2)",
               }}
@@ -507,7 +563,7 @@ const handleBack = () => {
             <Card
               sx={{
                 flex: 1,
-                backgroundColor: "#FCE7F1",
+                backgroundColor: "rgb(250, 222, 173)",
                 borderRadius: "10px",
                 boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.2)",
               }}
@@ -537,6 +593,10 @@ const handleBack = () => {
                     <strong>Urgency:</strong>{" "}
                     {selectedTicket?.ticketDetails?.urgency || "NIL"}
                   </Typography>
+                  <Typography variant="body2">
+                    <strong>SIMON Status:</strong>{" "}
+                    {selectedTicket?.status || "NIL"}
+                  </Typography>
                 </Box>
               </CardContent>
             </Card>
@@ -557,7 +617,7 @@ const handleBack = () => {
                   p : "0px !important",
               }}>
               <img
-            src={mimImage}
+            src={SimonImage}
             style={{
               width:"100%",
               height:"200px"
@@ -583,7 +643,7 @@ const handleBack = () => {
           >
             <Typography
               sx={{
-                color: "#B1125B",
+                color: "rgb(255, 98, 0)",
                 fontWeight: "bold",
                 fontSize: "20px",
               }}
@@ -600,7 +660,7 @@ const handleBack = () => {
               }}
             >
               <Table>
-                <TableHead sx={{ backgroundColor: "#B1125B" }}>
+                <TableHead sx={{ backgroundColor: "rgb(255, 98, 0)" }}>
                   <TableRow>
                     {[
                       "Change ID",
@@ -775,7 +835,7 @@ const handleBack = () => {
           >
             <Typography
               sx={{
-                color: "#B1125B",
+                color: "rgb(255, 98, 0)",
                 fontWeight: "bold",
                 fontSize: "20px",
               }}
@@ -792,7 +852,7 @@ const handleBack = () => {
               }}
             >
               <Table>
-                <TableHead sx={{ backgroundColor: "#B1125B" }}>
+                <TableHead sx={{ backgroundColor: "rgb(255, 98, 0)" }}>
                   <TableRow>
                     {[
                       "Incident ID",
@@ -849,6 +909,7 @@ const handleBack = () => {
                                     onClick={(e) => {
                                       e.stopPropagation(); // Prevent row click from triggering
                                       handleDialogOpen("Information", {
+                                        "Date and Time" : row.createdOn || "NIL",
                                         Description: row.description || "NIL",
                                         "Short Description":
                                           row.shortDescription || "NIL",
@@ -964,7 +1025,7 @@ const handleBack = () => {
           >
             <Typography
               sx={{
-                color: "#B1125B",
+                color: "rgb(255, 98, 0)",
                 fontWeight: "bold",
                 fontSize: "20px",
               }}
@@ -981,7 +1042,7 @@ const handleBack = () => {
               }}
             >
               <Table>
-                <TableHead sx={{ backgroundColor: "#B1125B" }}>
+                <TableHead sx={{ backgroundColor: "rgb(255, 98, 0)" }}>
                   <TableRow>
                     {[
                       "Incident ID",
@@ -1039,6 +1100,7 @@ const handleBack = () => {
                                     onClick={(e) => {
                                       e.stopPropagation(); // Prevent row click from triggering
                                       handleDialogOpen("Information", {
+                                        "Date and Time" : row.createdOn || "NIL",
                                         Description: row.description || "NIL",
                                         "Short Description":
                                           row.shortDescription || "NIL",
@@ -1154,7 +1216,7 @@ const handleBack = () => {
           >
             <Typography
               sx={{
-                color: "#B1125B",
+                color: "rgb(255, 98, 0)",
                 fontWeight: "bold",
                 fontSize: "20px",
               }}
@@ -1172,12 +1234,13 @@ const handleBack = () => {
               }}
             >
               <Table>
-                <TableHead sx={{ backgroundColor: "#B1125B" }}>
+                <TableHead sx={{ backgroundColor: "rgb(255, 98, 0)" }}>
                   <TableRow>
                     {[
                       "Scenario (Incident Response Plan)",
+                      // "Short Description",
                       "Incident Priority",
-                      "Full outage/degradation/temp tolerate",
+                      "Full outage/ degradation/ temp tolerate",
                       "Application Service",
                       "Impact on Integrations",
                       "MIM Actions",
@@ -1202,6 +1265,7 @@ const handleBack = () => {
                               rel="noopener noreferrer"
                               style={{ textDecoration: "none", color: "blue" }}>{row.scenario || "NIL"} </a>
                         </TableCell>
+                        {/* <TableCell>{row.shortDescription || "NIL"}</TableCell> */}
                         <TableCell>{row.priority}</TableCell>
                         <TableCell sx={{ width: "300px" }}>
                           {row.outage || "NIL"}
@@ -1291,6 +1355,7 @@ const handleBack = () => {
                                 handleDialogOpen(
                                   "Incident Response Plan Details",{
                                     "Scenario":row.scenario || "NIL",
+                                    "Short Description":row.shortDescription || "NIL",
                                     "Priority":row.priority || "NIL",
                                     "Outage":row.outage || "NIL",
                                     "Application Service":row.applicationService || "NIL",
@@ -1349,11 +1414,12 @@ const handleBack = () => {
               }}
             >
               <Table>
-                <TableHead sx={{ backgroundColor: "#B1125B" }}>
+                <TableHead sx={{ backgroundColor: "rgb(255, 98, 0)" }}>
                   <TableRow>
                     {[
                       "Source",
                       "Knowledge ID",
+                      "Short Description",
                       "Summary",
                       "Comments",
                     ].map((header) => (
@@ -1384,6 +1450,9 @@ const handleBack = () => {
                               rel="noopener noreferrer"
                               style={{ textDecoration: "none", color: "blue" }}>{row.knowledgeId||"NIL"} </a>
                             {/* {row.knowledgeId || "NIL"} */}
+                          </TableCell>
+                          <TableCell sx={{ width: "400px" }}>
+                            {row.shortDescription || "NIL"}
                           </TableCell>
                           <TableCell sx={{ width: "500px" }}>
                             <Box
@@ -1423,7 +1492,7 @@ const handleBack = () => {
                               </Tooltip>
                             </Box>
                           </TableCell>
-                          <TableCell sx={{ width: "700px" }}>
+                          <TableCell sx={{ width: "400px" }}>
                             {row.comments || "NIL"}
                           </TableCell>
                         </TableRow>
@@ -1454,7 +1523,7 @@ const handleBack = () => {
 
           <Typography
             sx={{
-              color: "#B1125B",
+              color: "rgb(255, 98, 0)",
               fontWeight: "bold",
               fontSize: "20px",
               opacity:
@@ -1491,7 +1560,7 @@ const handleBack = () => {
               }}
             >
               <Table>
-                <TableHead sx={{ backgroundColor: "#B1125B" }}>
+                <TableHead sx={{ backgroundColor: "rgb(255, 98, 0)" }}>
                   <TableRow>
                     {[
                       "Source",
@@ -1593,7 +1662,7 @@ const handleBack = () => {
 
           <Typography
             sx={{
-              color: "#B1125B",
+              color: "rgb(255, 98, 0)",
               fontWeight: "bold",
               fontSize: "20px",
               opacity:
@@ -1610,7 +1679,7 @@ const handleBack = () => {
           {/* Bullet Points */}
           <Box
             sx={{
-              border: "1px solid #B1125B",
+              border: "1px solid rgb(255, 98, 0)",
               p: 2,
               borderRadius: "10px",
               mb: 2,
@@ -1651,17 +1720,17 @@ const handleBack = () => {
                 sx={{
                   "& .MuiOutlinedInput-root": {
                     "&:hover fieldset": {
-                      borderColor: "#D81B60", // Orange border on hover
+                      borderColor: "rgb(255, 165, 0)", // Orange border on hover
                     },
                     "&.Mui-focused fieldset": {
-                      borderColor: "#D81B60", // Orange border on focus
+                      borderColor: "rgb(255, 165, 0)", // Orange border on focus
                     },
                   },
                   "& .MuiInputLabel-root": {
                     color: "rgba(0, 0, 0, 0.6)", // Default label color
                   },
                   "& .MuiInputLabel-root.Mui-focused": {
-                    color: "#D81B60", // Orange label on focus
+                    color: "rgb(255, 165, 0)", // Orange label on focus
                   },
                 }}
                 variant="outlined"
@@ -1674,7 +1743,7 @@ const handleBack = () => {
               <IconButton
                 onClick={handleAddBulletPoint}
                 disabled = {!inputValue}
-                sx={{ marginLeft: "10px", color: "#B1125B" }}
+                sx={{ marginLeft: "10px", color: "rgb(255, 98, 0)" }}
               >
                 <SendIcon />
               </IconButton>
@@ -1684,7 +1753,7 @@ const handleBack = () => {
             <>
               <Typography
                 sx={{
-                  color: "#B1125B",
+                  color: "rgb(255, 98, 0)",
                   fontWeight: "bold",
                   fontSize: "20px",
                 }}
@@ -1695,7 +1764,7 @@ const handleBack = () => {
               {/* Bullet Points */}
               <Box
                 sx={{
-                  border: "1px solid #B1125B",
+                  border: "1px solid rgb(255, 98, 0)",
                   p: 2,
                   borderRadius: "10px",
                   marginTop: 1,
@@ -1724,17 +1793,17 @@ const handleBack = () => {
                     sx={{
                       "& .MuiOutlinedInput-root": {
                         "&:hover fieldset": {
-                          borderColor: "#D81B60", // Orange border on hover
+                          borderColor: "rgb(255, 165, 0)", // Orange border on hover
                         },
                         "&.Mui-focused fieldset": {
-                          borderColor: "#D81B60", // Orange border on focus
+                          borderColor: "rgb(255, 165, 0)", // Orange border on focus
                         },
                       },
                       "& .MuiInputLabel-root": {
                         color: "rgba(0, 0, 0, 0.6)", // Default label color
                       },
                       "& .MuiInputLabel-root.Mui-focused": {
-                        color: "#D81B60", // Orange label on focus
+                        color: "rgb(255, 165, 0)", // Orange label on focus
                       },
                     }}
                     variant="outlined"
@@ -1744,7 +1813,7 @@ const handleBack = () => {
                   />
                   <IconButton
                     onClick={handleAddRootCausePoint}
-                    sx={{ marginLeft: "10px", color: "#B1125B" }}
+                    sx={{ marginLeft: "10px", color: "rgb(255, 98, 0)" }}
                   >
                     <SendIcon />
                   </IconButton>
@@ -1757,7 +1826,7 @@ const handleBack = () => {
             <Box sx={{ display: "flex", flexDirection: "column", flex: 1 }}>
               <Typography
                 sx={{
-                  color: "#B1125B",
+                  color: "rgb(255, 98, 0)",
                   fontWeight: "bold",
                   fontSize: "20px",
                   marginBottom: "2px",
@@ -1781,14 +1850,14 @@ const handleBack = () => {
               >
                 <Button
                   variant="contained"
-                  sx={{ backgroundColor: "#B1125B", pointerEvents:disabledButton === "helpful" ? "none" : "auto", opacity : disabledButton === "helpful" ? 0.5 : 1 }}
+                  sx={{ backgroundColor: "rgb(255, 98, 0)", pointerEvents:disabledButton === "helpful" ? "none" : "auto", opacity : disabledButton === "helpful" ? 0.5 : 1 }}
                   onClick={() => handleReviews("helpful")}
                 >
                   Reviewed and Helpful
                 </Button>
                 <Button
                   variant="contained"
-                  sx={{ backgroundColor: "#B1125B", pointerEvents:disabledButton === "not-useful" ? "none" : "auto", opacity : disabledButton === "not-useful" ? 0.5 : 1  }}
+                  sx={{ backgroundColor: "rgb(255, 98, 0)", pointerEvents:disabledButton === "not-useful" ? "none" : "auto", opacity : disabledButton === "not-useful" ? 0.5 : 1  }}
                   onClick={() => handleReviews("not-useful")}
                 >
                   Reviewed and not useful
@@ -1800,7 +1869,7 @@ const handleBack = () => {
             <Box sx={{ display: "flex", flexDirection: "column", flex: 3 }}>
               <Typography
                 sx={{
-                  color: "#B1125B",
+                  color: "rgb(255, 98, 0)",
                   fontWeight: "bold",
                   fontSize: "20px",
                   opacity:
@@ -1827,17 +1896,17 @@ const handleBack = () => {
                   sx={{
                     "& .MuiOutlinedInput-root": {
                       "&:hover fieldset": {
-                        borderColor: "#D81B60", // Orange border on hover
+                        borderColor: "rgb(255, 165, 0)", // Orange border on hover
                       },
                       "&.Mui-focused fieldset": {
-                        borderColor: "#D81B60", // Orange border on focus
+                        borderColor: "rgb(255, 165, 0)", // Orange border on focus
                       },
                     },
                     "& .MuiInputLabel-root": {
                       color: "rgba(0, 0, 0, 0.6)", // Default label color
                     },
                     "& .MuiInputLabel-root.Mui-focused": {
-                      color: "#D81B60", // Orange label on focus
+                      color: "rgb(255, 165, 0)", // Orange label on focus
                     },
                   }}
                   variant="outlined"
@@ -1852,7 +1921,7 @@ const handleBack = () => {
                         <IconButton
                           onClick={handleCommentSend}
                           disabled = {!disabledButton || !comments}
-                          sx={{ color: "#B1125B" }}
+                          sx={{ color: "rgb(255, 98, 0)" }}
                         >
                           <SendIcon />
                         </IconButton>
@@ -1896,7 +1965,7 @@ const handleBack = () => {
           onClick={() => setIsChatOpen(true)}
         >
           <img
-            src={mimImage}
+            src={SimonImage}
             style={{
               width: "50px",
               height: "60px",
@@ -1930,4 +1999,3 @@ const handleBack = () => {
 };
 
 export default AgenticAIScreen;
-

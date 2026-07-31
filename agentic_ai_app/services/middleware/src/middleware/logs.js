@@ -14,7 +14,7 @@ module.exports.logger = (req, res, next) => {
     res.on("finish", () => {
       const endTime = performance.now();
       if (res.statusCode >= 200 && res.statusCode < 400) {
-        log("middleware_logs").info("Api success", {
+        log("easyjet_logs").info("Api success", {
           from: "Logger middleware",
           functionName: "logger",
           path: req.originalUrl,
@@ -24,7 +24,7 @@ module.exports.logger = (req, res, next) => {
           timeElapsed: `${Math.round(endTime - startTime)} ms`,
         });
       } else {
-        log("middleware_logs").error("API failed.", {
+        log("easyjet_logs").error("API failed.", {
           from: "logger middleware",
           functionName: "logger",
           path: req.originalUrl,

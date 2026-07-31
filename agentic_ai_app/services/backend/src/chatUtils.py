@@ -118,7 +118,7 @@ def inc_timestamp(query , ci = None , db_config = None):
         out = sql(f"""
             select inc_id , short_description , raised_date from p1p2_incidents
             where previous_update between '{stamps[0]}' and '{stamps[1]}'
-            and cmdb_ci = '{ci}'
+            and configuration_item = '{ci}'
             order by raised_date desc
                 """,db_config)
         chatlog = chatlog.__add__(f"Extracted for CI : {ci} \n")
@@ -137,7 +137,7 @@ def inc_timestamp(query , ci = None , db_config = None):
 def _get_inc_id(id , db_config):
 
     out = sql(f"""
-        select inc_id , cmdb_ci , short_description , description , resolution_notes , raised_date from p1p2_incidents
+        select inc_id , configuration_item , short_description , description , resolution_notes , raised_date from p1p2_incidents
         where inc_id = '{id}'
                 """, db_config)
     summary = ""

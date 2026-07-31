@@ -6,6 +6,7 @@ import re
 import json
 import boto3
 import threading
+import requests
 import urllib3
 import psycopg2
 import psycopg2.extras
@@ -104,6 +105,11 @@ sn_client_id = configPythonSecrets["serviceNow"]["clientId"]
 sn_client_secret = configPythonSecrets["serviceNow"]["clientSecret"]
 sn_token_url = configPythonSecrets["serviceNow"]["tokenUrl"]
 sn_base_url = configPythonSecrets["serviceNow"]["baseUrl"]
+
+# Confluence
+conf_user = configPythonSecrets["confluence"]["user"]
+conf_token = configPythonSecrets["confluence"]["token"]
+conf_url=configPythonSecrets["confluence"]["url"]
 
 # ====================== UTILITIES ============================
 #---------------------html to text----------
@@ -267,6 +273,129 @@ def insert_knowledge_vec(data, db_config, update_mode=False):
         if conn:
             conn.close()
 
+#-----------------Config Function --------------------------
+def update_ci_from_config_secret(db_config, configPythonSecrets, overwrite_existing=False):
+    """
+    Updates the 'ci' column in knowledge_vec for SharePoint and Confluence,
+    based on URLs provided in the 'config' section of Secrets Manager.
+
+    For Confluence:
+        - Extracts the page ID from the URL (segment after '/pages/')
+        - Fetches all descendant *pages only* and updates CI for them
+        - Logs any URL whose ID is not found in the DB
+
+    For SharePoint:
+        - Matches the provided link directly in the DB (column 'link')
+        - If the link exists, updates CI; otherwise logs missing link
+    """
+
+    try:
+        config_section = configPythonSecrets.get("config", {})
+        if not config_section:
+            logger.warning("No 'config' section found in Secrets Manager data.")
+            return
+
+        # Confluence credentials (for descendant fetch)
+        conf_user = configPythonSecrets["confluence"]["user"]
+        conf_token = configPythonSecrets["confluence"]["token"]
+
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        total_updates = 0
+        total_missing = 0
+
+        for source, ci_map in config_section.items():
+            if source not in ["confluence"]: #, "sharePoint"
+                logger.debug(f"Skipping unsupported source: {source}")
+                continue
+
+            logger.info(f"Processing CI updates for source: {source}")
+
+            for ci_name, url_list in ci_map.items():
+                if not url_list:
+                    continue
+
+                logger.info(f"  Updating CI '{ci_name}' for {len(url_list)} URLs in '{source}'")
+
+                for link in url_list:
+                    try:
+                        # ================== CONFLUENCE ==================
+                        if source == "confluence":
+                            # Extract page ID from URL (pattern: .../pages/{id}/...)
+                            match = re.search(r"/pages/(\d+)", link)
+                            if not match:
+                                logger.warning(f"Invalid Confluence URL (no ID found): {link}")
+                                total_missing += 1
+                                continue
+
+                            page_id = match.group(1)
+                            base_api = "https://api.atlassian.com/ex/confluence/45c68744-a379-4908-9bef-efb9c1ba643d/wiki"
+                            url = f"{base_api}/rest/api/content/{page_id}/descendant/page"
+                            descendants = []
+
+                            logger.info(f"Fetching descendant pages for Confluence parent {page_id}...")
+
+                            while url:
+                                resp = requests.get(url, auth=(conf_user, conf_token))
+                                if resp.status_code != 200:
+                                    logger.warning(f"Failed to fetch descendants for {page_id}: {resp.status_code} - {resp.text}")
+                                    break
+
+                                data = resp.json()
+                                results = data.get("results", [])
+                                for r in results:
+                                    if r.get("type") == "page" and r.get("id"):
+                                        descendants.append(r["id"])
+
+                                next_link = (data.get("_links") or {}).get("next")
+                                url = base_api + next_link if next_link else None
+
+                            # Include parent page too
+                            all_ids = [page_id] + descendants
+                            logger.info(f"  Changing CI for Confluence parent {page_id} and {len(descendants)} descendant pages.")
+
+                            updated_any = False
+                            for pid in all_ids:
+                                
+                                cursor.execute(
+                                    """
+                                    UPDATE knowledge_vec
+                                    SET ci = %s
+                                    WHERE knowledge_id = %s::text
+                                      AND source ILIKE 'Confluence'
+                                    """,
+                                    (ci_name, str(pid))
+                                )
+                                
+
+                                if cursor.rowcount > 0:
+                                    total_updates += cursor.rowcount
+                                    updated_any = True
+
+                            if not updated_any:
+                                logger.warning(f"Confluence page ID {page_id} (from link {link}) not found in DB.")
+                                total_missing += 1
+
+                        
+                    except Exception as e:
+                        logger.warning(f"Error updating CI for {source}:{link} ({ci_name}): {e}")
+                        continue
+
+        conn.commit()
+        logger.info(f"CI update from secret config completed. Total records updated: {total_updates}, Missing links/IDs: {total_missing}")
+
+    except Exception as e:
+        logger.exception(f"Error in CI update pipeline: {e}")
+        raise
+
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+
 # ====================== SERVICENOW  ============================
 def get_access_token_sn():
     data = {
@@ -414,6 +543,181 @@ def format_sn_records_parallel(articles):
 
 # ====================== CONFLUENCE ============================
 
+def safe_request(url, auth, params=None, max_retries=3):
+    for attempt in range(max_retries):
+        resp = requests.get(url, auth=auth, params=params)
+        if resp.status_code == 200:
+            return resp
+        elif resp.status_code in [502, 503, 504]:
+            wait_time = (2 ** attempt)*4
+            logger.warning(f"Retrying Confluence request (attempt {attempt+1}) after {wait_time}s: {resp.status_code}")
+            time.sleep(wait_time)
+        else:
+            resp.raise_for_status()
+    raise Exception(f"Confluence API failed after {max_retries} retries: {resp.status_code}")
+ 
+ 
+MAX_WORKERS = 4
+MAX_SUMMARY_INPUT = 5000  # limit text length sent for summarization
+
+def process_confluence_page(result):
+    """Worker: summarize, embed, and format a single Confluence page."""
+    try:
+        if result.get("type") != "page":
+            return None
+
+        # --- Extract CI from labels ---
+        ci = ""
+        try:
+            labels_info = result.get("metadata", {}).get("labels", {}).get("results", [])
+            if labels_info and isinstance(labels_info, list):
+                label_names = [lbl.get("name", "").strip() for lbl in labels_info if lbl.get("name")]
+                if label_names:
+                    ci = ",".join(label_names)
+        except Exception as e:
+            logger.debug(f"Label extraction failed for Confluence page {result.get('id')}: {e}")
+            ci = ""
+
+
+        html_content = result["body"]["view"].get("value", "")
+        if not html_content or not html_content.strip():
+            return None
+
+        text = html_to_text(html_content)
+        text = mask_pii(text)
+        text = text[:MAX_SUMMARY_INPUT]  # limit size for faster LLM processing
+
+        summary = summarize_text(text, region_name, llm_model)
+        if not summary or not summary.strip():
+            return None
+
+        embedding = generate_embeddings(summary)
+
+        self_link = result.get("_links", {}).get("self")
+        webui_path = result.get("_links", {}).get("webui")
+        link = ""
+        if self_link and webui_path:
+            base_part = self_link.split("/wiki")[0] + "/wiki"
+            link = f"{base_part}{webui_path}"
+
+        return {
+            "ci": ci,
+            "chunk": '',
+            "embedding": embedding,
+            "knowledge_id": result["id"],
+            "knowledge_type": "",
+            "source": "Confluence",
+            "link": link,
+            "summary": summary,
+        }
+    except Exception as e:
+        logger.error(f"Error processing Confluence page {result.get('id')}: {e}")
+        return None
+
+def get_confluence_pages_created_24h(db_config):
+    """Fetch and insert Confluence pages created in last 24h — parallel + optimized."""
+    response = {}
+    eof = False
+    total = 0
+
+    base_api = "https://api.atlassian.com/ex/confluence/45c68744-a379-4908-9bef-efb9c1ba643d/wiki"
+    initial_url = conf_url
+    params = {"expand": "title,body.view,version,metadata.labels", "cql": 'type=page AND created >= now("-24h")'}
+
+    try:
+        while not eof:
+            next_link = (response.get("_links") or {}).get("next")
+            if response and not next_link:
+                eof = True
+                break
+
+            url = base_api + next_link if next_link else initial_url
+            resp = safe_request(url, auth=(conf_user, conf_token), params=None if next_link else params)
+            if resp.status_code != 200:
+                logger.error(f"Confluence API request failed: {resp.status_code} - {resp.text}")
+                break
+
+            response = resp.json()
+            results = response.get("results", [])
+            if not results:
+                break
+
+            # --- Parallel summarization and embedding ---
+            batch_records = []
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                futures = [executor.submit(process_confluence_page, r) for r in results]
+                for f in as_completed(futures):
+                    rec = f.result()
+                    if rec:
+                        batch_records.append(rec)
+
+            if batch_records:
+                # created-case: insert only if not exists
+                insert_knowledge_vec(batch_records, db_config, update_mode=False)
+                total += len(batch_records)
+                logger.info(f"Inserted {len(batch_records)} Confluence pages (Total: {total})")
+
+
+
+        logger.info(f" Completed Confluence created ingestion. Total inserted: {total}")
+        return total
+
+    except Exception as e:
+        logger.exception(f" Error during Confluence created ingestion: {e}")
+        return total
+
+def get_confluence_pages_updated_24h(db_config):
+    """Fetch and update Confluence pages modified in last 24h — parallel + optimized."""
+    response = {}
+    eof = False
+    total = 0
+
+    base_api = "https://api.atlassian.com/ex/confluence/45c68744-a379-4908-9bef-efb9c1ba643d/wiki"
+    initial_url = conf_url
+    params = {"expand": "title,body.view,version,metadata.labels", "cql": 'type=page AND lastModified >= now("-24h")'}
+
+    try:
+        while not eof:
+            next_link = (response.get("_links") or {}).get("next")
+            if response and not next_link:
+                eof = True
+                break
+
+            url = base_api + next_link if next_link else initial_url
+            resp = safe_request(url, auth=(conf_user, conf_token), params=None if next_link else params)
+            if resp.status_code != 200:
+                logger.error(f"Confluence API request failed: {resp.status_code} - {resp.text}")
+                break
+
+            response = resp.json()
+            results = response.get("results", [])
+            if not results:
+                break
+
+            # --- Parallel summarization and embedding ---
+            batch_records = []
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                futures = [executor.submit(process_confluence_page, r) for r in results]
+                for f in as_completed(futures):
+                    rec = f.result()
+                    if rec:
+                        batch_records.append(rec)
+
+            if batch_records:
+                # updated-case: upsert (insert or update)
+                insert_knowledge_vec(batch_records, db_config, update_mode=True)
+                total += len(batch_records)
+                logger.info(f"Updated {len(batch_records)} Confluence pages (Total: {total})")
+
+
+        logger.info(f" Completed Confluence updated ingestion. Total updated: {total}")
+        return total
+
+    except Exception as e:
+        logger.exception(f" Error during Confluence updated ingestion: {e}")
+        return total
+
+
 # ====================== MAIN HANDLER ============================
 def knowledge_handler(event=None, context=None):
     if context is None:
@@ -464,11 +768,28 @@ def knowledge_handler(event=None, context=None):
                 logger.exception(f"ServiceNow updated thread failed: {e}")
                 raise
 
+        # ========== Confluence Threads (Created + Updated) ==========
+        def run_confluence_created():
+            try:
+                get_confluence_pages_created_24h(db_config)
+            except Exception as e:
+                logger.exception(f"Confluence created thread failed: {e}")
+                raise
 
+        def run_confluence_updated():
+            try:
+                get_confluence_pages_updated_24h(db_config)
+            except Exception as e:
+                logger.exception(f"Confluence updated thread failed: {e}")
+                raise
+
+        
         # ======== Launch All Sources in Parallel Threads =========
         threads = [
             threading.Thread(target=run_servicenow_created),
             threading.Thread(target=run_servicenow_updated),
+            threading.Thread(target=run_confluence_created),
+            threading.Thread(target=run_confluence_updated),
         ]
 
         for t in threads:
@@ -477,6 +798,8 @@ def knowledge_handler(event=None, context=None):
             t.join()
 
         time.sleep(5)  # wait for all threads to complete
+
+        update_ci_from_config_secret(db_config, configPythonSecrets, overwrite_existing=False)
 
         logger.info("=== All data source threads completed successfully ===")
 

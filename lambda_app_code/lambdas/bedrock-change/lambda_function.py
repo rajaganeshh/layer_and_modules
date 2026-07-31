@@ -581,11 +581,7 @@ def historical_changes(db_config,incident_id,ci_list):
             where inc_id = '{incident_id}';
         """
         cursor.execute(_fetch_embed)
-        _embed_rows = cursor.fetchall()
-        if not _embed_rows:
-            logger.warning(f"No embedding found in ticket_history_vec for incident {incident_id}. Skipping historical_changes.")
-            return []
-        new_embed_vec = _embed_rows[0][0]
+        new_embed_vec = cursor.fetchall()[0][0]
         logger.info(f"Embedding pulled for {incident_id} for searching through DB")
 
         _fetch_date = f"""
@@ -671,11 +667,7 @@ def sus_changes(inc_id, db_config, out_sim_changes, all_cis):
             """
        
         cursor.execute(_fetch_new)
-        _inc_rows = cursor.fetchall()
-        if not _inc_rows:
-            logger.warning(f"No incident record found in P1P2_Incidents for inc_id {inc_id}. Skipping sus_changes.")
-            return []
-        _short_desc ,_desc, _cfg = _inc_rows[0]
+        _short_desc ,_desc, _cfg = cursor.fetchall()[0]
  
         scoring = []
         for item in out_sim_changes:
@@ -804,8 +796,7 @@ def sync_blob(org_inc , results):
             Select link from change_history_vec where chg_id = '{item['change_id']}'
             """
             cursor.execute(_query)
-            _link_rows = cursor.fetchall()
-            link = _link_rows[0][0] if _link_rows else ""
+            link = cursor.fetchall()[0][0]
             logger.debug(f"Link fetched for {item['change_id']}")
 
 
@@ -955,12 +946,8 @@ def fetch_relevant_changes(incident_id):
             SELECT category,configuration_item,MIM_agent_output_blob FROM P1P2_Incidents
             WHERE inc_id = '{incident_id}'
             """
-        cursor.execute(_query)
-        _main_rows = cursor.fetchall()
-        if not _main_rows:
-            logger.error(f"No record found in P1P2_Incidents for incident {incident_id}. Cannot proceed with fetch_changes.")
-            raise ValueError(f"Incident {incident_id} not found in P1P2_Incidents table.")
-        _ctg , _cfg, all_cis  = _main_rows[0]
+        cursor.execute(_query)  
+        _ctg , _cfg, all_cis  = cursor.fetchall()[0]
         # logger.info(all_cis)
         all_cis = json.loads(all_cis.tobytes().decode('utf-8'))["all_cis"]
         #logger.info(type(all_cis))

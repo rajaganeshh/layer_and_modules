@@ -1,6 +1,7 @@
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const path = require("path");
 const fs = require("fs");
+const { log } = require("./logs");
 
 const s3 = new S3Client({
   endpoint: JSON.parse(process.env.secrets).s3.endpoint,
@@ -26,22 +27,14 @@ module.exports.logsToSS3 = async (req, res, next) => {
         ContentType: "text/plain",
       });
       await s3.send(command);
-      console.log(`uploaded ${file} to s3`);
     }
   } catch (error) {
     //  don't let the server crashed
-    try {
-      const { log } = require("./logs");
-      if (typeof log === "function") {
-        log().error("----error while uploading the logs------", {
+    log().error("----error while uploading the logs------",{
           from: "logs to ss3",
           functionName: "logsToSS3",
-          error,
-        });
-      }
-    } catch (_loggerError) {
-      // ignore logger failures during best-effort S3 upload
-    }
+          error
+        })
     console.log("----error while uploading the logs------");
   }
 };

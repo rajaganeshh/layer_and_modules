@@ -1,24 +1,22 @@
 import axios from 'axios';
 import Cookies from 'js-cookie';
+import { useNavigate } from 'react-router-dom';
  
-
+ 
 const api = axios.create({
   baseURL: process.env.REACT_APP_NODE_API_BASE_URL,
-  headers:{
-    'Content-Type': `application/json`
+  headers: {
+    'Content-Type': `application/json`,
   },
-  withCredentials: true
+  withCredentials: true,
 });
  
-// 🛡️ Request Interceptor — Add CSRF token to headers dynamically
 api.interceptors.request.use(
-    (config) => {
+  (config) => {
     const csrfToken = Cookies.get('x-csrf-token');
-
-    
+ 
     if (csrfToken) {
       config.headers['x-csrf-token'] = csrfToken;
-
     }
     return config;
   },
@@ -27,57 +25,31 @@ api.interceptors.request.use(
   }
 );
  
-// 🌀 Token refresh logic (unchanged from your code)
-let isRefreshing = false;
-let failedQueue = [];
- 
-const processQueue = (error = null) => {
-  failedQueue.forEach((prom) => {
-    if (error) {
-      prom.reject(error);
-    } else {
-      prom.resolve();
-    }
-  });
-  failedQueue = [];
-};
- 
+// 🌀 Response Interceptor — Redirect to login on 401
 api.interceptors.response.use(
   (response) => {
+    // If the response is successful, return it as is
     return response;
   },
-  async (error) => {
-    const originalRequest = error.config;
- 
-    if (error.response && error.response.status === 401 && !originalRequest._retry) {
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        })
-          .then(() => api(originalRequest))
-          .catch((err) => Promise.reject(err));
-      }
- 
-      originalRequest._retry = true;
-      isRefreshing = true;
- 
-      try {
-        await axios.get(`${process.env.REACT_APP_NODE_API_BASE_URL}/refreshToken`, {
-          withCredentials: true
-        });
- 
-        processQueue();
-        return api(originalRequest);
-      } catch (err) {
-        processQueue(err);
-        return Promise.reject(err);
-      } finally {
-        isRefreshing = false;
+  (error) => {
+    // Ensure error.response exists
+    if (error.response) {
+      const originalRequest = error.config;
+     
+      // Check if the error is a 401 Unauthorized
+      if (error.response.status === 401) {
+        // Prevent infinite redirect loops (e.g., if the login page itself triggers a 401)
+        if (window.location.pathname !== '/login') {
+          window.location.href = "/login"
+        }
+        return Promise.reject(error); // Reject the promise without retrying
       }
     }
  
+    // Reject other errors as usual
     return Promise.reject(error);
   }
 );
  
 export default api;
+ 
